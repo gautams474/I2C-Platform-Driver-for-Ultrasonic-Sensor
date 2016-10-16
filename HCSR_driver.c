@@ -25,30 +25,26 @@ static struct hcsr_dev{
 	int buffer[5];
 }*hcsr_devp[2];
 
+
 static int hcsr_driver_open(struct inode *inode, struct file *file){
 	int device_no = 0;
 	struct miscdevice *c;
 
 	device_no = MINOR(inode->i_rdev);
 	printk(KERN_ALERT"\nIn open, minor no = %d\n",device_no);
-	/*
+	
 	list_for_each_entry(c, &hcsr_devp[0]->misc_dev.list, list) { 
-		//printk(KERN_ALERT"%d ",c->minor);
-		if(device_no == c->minor){
+		if(strlcmp(c->name, DEVICE_1, 6)){
 			printk(KERN_ALERT"HSCR 1 Opened");
 			file->private_data = hcsr_devp[0];
+			break;
 		}
-	}*/
-
-	if(device_no == hcsr_devp[0]->minor){
-		printk(KERN_ALERT"HSCR 1 Opened");
-		file->private_data = hcsr_devp[0];
+		else if(strlcmp(c->name, DEVICE_2, 6)){
+			printk(KERN_ALERT"HSCR 2 Opened");
+			file->private_data = hcsr_devp[1];
+			break;
+		}
 	}
-	else if(device_no == hcsr_devp[1]->minor){
-		printk(KERN_ALERT"HSCR 2 Opened");
-		file->private_data = hcsr_devp[1];
-	}
-
 	return 0;
 }
 
