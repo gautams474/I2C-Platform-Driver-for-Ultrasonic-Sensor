@@ -1,1 +1,0 @@
-cmd_/home/prameet/Project2-EOSI/HCSR_driver.ko := ld -r -m elf_x86_64 -T ./scripts/module-common.lds --build-id  -o /home/prameet/Project2-EOSI/HCSR_driver.ko /home/prameet/Project2-EOSI/HCSR_driver.o /home/prameet/Project2-EOSI/HCSR_driver.mod.o
