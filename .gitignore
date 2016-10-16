@@ -10,6 +10,8 @@
 *.ko
 *.ko.cmd
 *.mod.o.cmd
+*.c~
+*.Makefile~
 
 # Packages #
 ############
