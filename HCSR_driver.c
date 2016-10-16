@@ -15,9 +15,26 @@
 #include <linux/gpio.h>
 #include <linux/delay.h>
 
-
 #define DEVICE_1	"HCSR_1"
 #define DEVICE_2	"HCSR_2"
+
+#define GPIO_ECHO 13
+#define GPIO_ECHO_LVL_SHFTR 34
+#define GPIO_ECHO_PULL_UP 35
+#define GPIO_ECHO_FMUX 77
+
+#define GPIO_TRIGGER 14
+#define GPIO_TRIGGER_LVL_SHFTR 16
+#define GPIO_TRIGGER_PULL_UP 17
+#define GPIO_TRIGGER_FMUX 76
+
+#define GPIO_HIGH 1
+#define GPIO_LOW 0
+
+#define GPIO_INPUT 1
+#define GPIO_OUTPUT 0
+
+#define STRINGIFY(x) #x
 
 static struct hcsr_dev{
 	struct miscdevice misc_dev;
@@ -25,6 +42,38 @@ static struct hcsr_dev{
 	int buffer[5];
 }*hcsr_devp[2];
 
+void gpio_init(int pin, char* name, int direction, int value){
+	int ret;
+	ret = gpio_request(pin, name);
+	if(ret)
+		printk("GPIO pin number %d could not be requested.\n", pin);
+
+	if(direction == GPIO_INPUT){
+		ret = gpio_direction_input(pin);
+		if(ret)
+			printk("GPIO pin number %d could not be set as input.\n", pin);
+	}
+	else if(direction == GPIO_OUTPUT){
+		ret = gpio_direction_output(pin, value);
+		if(ret)
+			printk("GPIO pin number %d could not be set as output.\n", pin);
+		
+		// Direction output didn't seem to init correctly.		
+		gpio_set_value_cansleep(pin, value); 
+	}
+}
+
+void free_GPIOs(void){
+	gpio_free(GPIO_ECHO);
+	gpio_free(GPIO_ECHO_LVL_SHFTR);
+	gpio_free(GPIO_ECHO_PULL_UP);
+	gpio_free(GPIO_ECHO_FMUX);
+
+	gpio_free(GPIO_TRIGGER);
+	gpio_free(GPIO_TRIGGER_LVL_SHFTR);
+	gpio_free(GPIO_TRIGGER_PULL_UP);
+	gpio_free(GPIO_TRIGGER_FMUX);
+};
 
 static int hcsr_driver_open(struct inode *inode, struct file *file){
 	int device_no = 0;
@@ -34,12 +83,12 @@ static int hcsr_driver_open(struct inode *inode, struct file *file){
 	printk(KERN_ALERT"\nIn open, minor no = %d\n",device_no);
 	
 	list_for_each_entry(c, &hcsr_devp[0]->misc_dev.list, list) { 
-		if(strlcmp(c->name, DEVICE_1, 6)){
+		if(strncmp(c->name, DEVICE_1, 6)){
 			printk(KERN_ALERT"HSCR 1 Opened");
 			file->private_data = hcsr_devp[0];
 			break;
 		}
-		else if(strlcmp(c->name, DEVICE_2, 6)){
+		else if(strncmp(c->name, DEVICE_2, 6)){
 			printk(KERN_ALERT"HSCR 2 Opened");
 			file->private_data = hcsr_devp[1];
 			break;
@@ -98,7 +147,17 @@ static struct miscdevice hcsr_dev2 = {
 static int __init hcsr_driver_init(void){
   int ret;
 
-    hcsr_devp[0] = kmalloc(sizeof(struct hcsr_dev), GFP_KERNEL);
+  gpio_init(GPIO_ECHO, STRINGIFY(GPIO_ECHO), GPIO_INPUT, GPIO_LOW);
+  gpio_init(GPIO_ECHO_LVL_SHFTR, STRINGIFY(GPIO_ECHO_LVL_SHFTR), GPIO_OUTPUT, GPIO_HIGH);
+  gpio_init(GPIO_ECHO_PULL_UP, STRINGIFY(GPIO_ECHO_PULL_UP), GPIO_OUTPUT, GPIO_LOW);
+  gpio_init(GPIO_ECHO_FMUX, STRINGIFY(GPIO_ECHO_FMUX), GPIO_OUTPUT, GPIO_LOW);
+
+  gpio_init(GPIO_TRIGGER, STRINGIFY(GPIO_TRIGGER), GPIO_OUTPUT, GPIO_LOW);
+  gpio_init(GPIO_TRIGGER_LVL_SHFTR, STRINGIFY(GPIO_TRIGGER_LVL_SHFTR), GPIO_OUTPUT, GPIO_LOW);
+  gpio_init(GPIO_TRIGGER_PULL_UP, STRINGIFY(GPIO_TRIGGER_PULL_UP), GPIO_OUTPUT, GPIO_LOW);
+  gpio_init(GPIO_TRIGGER_FMUX, STRINGIFY(GPIO_TRIGGER_FMUX), GPIO_OUTPUT, GPIO_LOW);
+
+  hcsr_devp[0] = kmalloc(sizeof(struct hcsr_dev), GFP_KERNEL);
    if(!hcsr_devp[0]){
    		printk("Kmalloc failed 1\n");
    		return -1;
@@ -113,25 +172,32 @@ static int __init hcsr_driver_init(void){
   ret = misc_register(&hcsr_dev1);
   if (ret){
   	printk(KERN_ERR"Unable to register misc device 1\n");
-  	kfree(hcsr_devp);
+  	kfree(hcsr_devp[0]);
+  	kfree(hcsr_devp[1]);
   	return ret;
   }
   
   ret = misc_register(&hcsr_dev2);
   if (ret){
   	printk(KERN_ERR"Unable to register misc device 2\n");
+  	kfree(hcsr_devp[0]);
+  	kfree(hcsr_devp[1]);
   	return ret;
   }
-  	  hcsr_devp[0]->misc_dev = hcsr_dev1;
-  	  hcsr_devp[1]->misc_dev = hcsr_dev2;
-	hcsr_devp[0]->minor = hcsr_dev1.minor;
-	hcsr_devp[1]->minor = hcsr_dev2.minor;
+
+  hcsr_devp[0]->misc_dev = hcsr_dev1;
+  hcsr_devp[0]->minor = hcsr_dev1.minor;
+
+  hcsr_devp[1]->misc_dev = hcsr_dev2;
+  hcsr_devp[1]->minor = hcsr_dev2.minor;
   return 0;
   
 }
 
 /* Driver Exit */
 void __exit hcsr_driver_exit(void){
+
+	free_GPIOs();
 
 	kfree(hcsr_devp[0]);
 	kfree(hcsr_devp[1]);
@@ -145,9 +211,3 @@ void __exit hcsr_driver_exit(void){
 module_init(hcsr_driver_init);
 module_exit(hcsr_driver_exit);
 MODULE_LICENSE("GPL v2");
-
-
-
-
-
-
