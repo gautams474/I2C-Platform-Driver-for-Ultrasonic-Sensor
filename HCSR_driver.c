@@ -7,24 +7,25 @@
 #include <linux/list.h>
 
 #include <linux/device.h>
-
 #include <linux/kernel.h>
 #include <linux/types.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/gpio.h>
 #include <linux/delay.h>
-
+#include <linux/jiffies.h>
 
 #define DEVICE_1	"HCSR_1"
 #define DEVICE_2	"HCSR_2"
 
 static struct hcsr_dev{
 	struct miscdevice misc_dev;
-	int minor;
+	int mode;
+	int frequency;
 	int buffer[5];
 }*hcsr_devp[2];
 
+struct timer_list my_timer;
 
 static int hcsr_driver_open(struct inode *inode, struct file *file){
 	int device_no = 0;
@@ -53,11 +54,87 @@ static int hcsr_driver_close(struct inode *inode, struct file *file){
 
 }
 
+struct timer_struct{
+	struct timer_list my_timer;
+	int mode;
+	int time;
+};
+
+void Start_Usonic (unsigned long data){
+	
+	struct timer_struct *timer_data = (struct timer_struct)data;
+	struct timer_list *timer = &timer_data->my_timer;
+	
+	gpio_set_value(trigger_pin, 1); //14
+	udelay(10);
+	gpio_set_value(trigger_pin, 0); //14
+	
+	if(mode){
+		timer->expires = jiffies+timer_data->time;
+		add_timer(timer);
+	}
+	return ;
+}
+
+void start_trigger(int mode, int frequency){
+	struct timer_struct timer_data;
+	timer_data.mode = mode;
+	// calculate time from frequency, replace 15
+	timer_data.time = mode*15;
+	timer_data.my_timer = my_timer;
+	// Initialize timer
+	my_timer.function = Start_Usonic;
+	my_timer.expires = jiffies + timer_data.time;
+	my_timer.data = (unsigned long)&timer_data; // for restart
+	init_timer(&my_timer);
+	
+	add_timer(&my_timer);
+}
+
+/// IRQ Handler
+
+static irq_handler_t echo_handler(int irq, void *dev_id, struct pt_regs *regs)
+{	
+	static unsigned long time_rise, time_fall, time_diff;
+	static char entry =0;
+	static int i =0;
+	
+ 	if(entry == 0){
+	 	rdtscl(time_rise);
+		entry =1;
+		irq_set_irq_type(irq,IRQF_TRIGGER_FALLING);
+	}
+	else{
+		rdtscl(time_fall);
+		time_diff = time_fall - time_rise;
+		hcsr_devp->buffer[i] = (time_diff / (58*400));
+		entry =0;
+		irq_set_irq_type(irq,IRQF_TRIGGER_RISING);
+	}
+	
+	i = (i+1)%5; 	
+	return (irq_handler_t)IRQ_HANDLED;
+}
+
+
 static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count, loff_t *ppos){
 	struct hcsr_dev *hcsr_devp = file->private_data;
-
-	if(copy_from_user(&(hcsr_devp->buffer)[0], buf, sizeof(int)*5) != 0)
+	int input;
+	if(copy_from_user(&input, buf, sizeof(int)) != 0)
 		return -EFAULT;
+
+	if(!hcsr_devp->mode){  //one shot mode
+
+	}
+	else{  //continous mode 
+		if(!input){ // stop continuous triggering
+			del_timer(&my_timer);
+		}
+		else{  // start continuous triggering
+			start_trigger(hcsr_devp->mode,hcsr_devp->frequency);
+		}
+	}
+	
 
 	return 0;
 }
