@@ -124,43 +124,10 @@ static int hcsr_driver_close(struct inode *inode, struct file *file){
 
 }
 
-struct timer_list my_timer;
-
-struct timer_struct{
-	struct timer_list my_timer;
-	int mode;
-	int time;
-};
-
-void Start_Usonic (unsigned long data){
-	
-	struct timer_struct *timer_data = (struct timer_struct *)data;
-	struct timer_list *timer = &timer_data->my_timer;
-	
+inline void trigger_HCSR(void){
 	gpio_set_value(GPIO_TRIGGER, 1); //14
 	udelay(10);
 	gpio_set_value(GPIO_TRIGGER, 0); //14
-	
-	if(timer_data->mode){
-		timer->expires = jiffies+timer_data->time;
-		add_timer(timer);
-	}
-	return ;
-}
-
-void start_trigger(int mode, int frequency ){
-	struct timer_struct timer_data;
-	timer_data.mode = mode;
-	// calculate time from frequency, replace 15
-	timer_data.time = mode*15;
-	timer_data.my_timer = my_timer;
-	// Initialize timer
-	my_timer.function = Start_Usonic;
-	my_timer.expires = jiffies + timer_data.time;
-	my_timer.data = (unsigned long)&timer_data; // for restart
-	init_timer(&my_timer);
-	printk("before add timer\n");
-	add_timer(&my_timer);
 }
 
 /// IRQ Handler
@@ -171,8 +138,8 @@ static irq_handler_t echo_handler(int irq, void *dev_id, struct pt_regs *regs)
 	static char entry =0;
 	static int i =0;
 
-	//struct hcsr_dev *hcsr_devp = (struct hcsr_dev *) dev_id;
-	/*
+	struct hcsr_dev *hcsr_devp = (struct hcsr_dev *) dev_id;
+	
  	if(entry == 0){
 	 	rdtscl(time_rise);
 		entry =1;
@@ -187,12 +154,18 @@ static irq_handler_t echo_handler(int irq, void *dev_id, struct pt_regs *regs)
 	}
 	
 	i = (i+1)%5; 	
-	*/
+	
 
-	(hcsr_devp[0])->buffer[0] = 0;
+	(hcsr_devp[0])->buffer[1] = 0;
 	return (irq_handler_t)IRQ_HANDLED;
 }
 
+int trigger_func(void* data){
+	//while(!kthread_should_stop()){
+		trigger_HCSR();
+		msleep(60);
+	//}
+}
 
 static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count, loff_t *ppos){
 	struct  *hcsr_devp = file->private_data;
@@ -227,6 +200,7 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 			if(ret < 0){
 				printk("Error requesting IRQ: %d\n", ret);
 			}
+
 			printk("before start trigger\n");
 			trigger_task_struct = kthread_run(trigger_func, NULL, "%s-trigger_func",hcsr_devp->misc_dev->name);
 			if(IS_ERR(kthread)){
@@ -249,6 +223,7 @@ static ssize_t hcsr_driver_read(struct file *file, char *buf, size_t count, loff
 
 	//for(i=0;i<5;i++){
 		printk(KERN_ALERT "Reading: %d \n", hcsr_devp->buffer[0]);
+		printk(KERN_ALERT "Reading, should be 0: %d \n", hcsr_devp->buffer[1]);
 	//}
 	return bytes_read;
 
