@@ -48,6 +48,7 @@ static struct hcsr_dev{
 	int mode;
 	int frequency;
 	int buffer[5];
+	struct task_struct* trigger_task_struct;
 }*hcsr_devp[2];
 
 
@@ -73,9 +74,7 @@ void gpio_init(int pin, char* name, int direction, int value){
 }
 
 void free_GPIOs(void){
-	unsigned int echo_irq =0;
-	echo_irq = gpio_to_irq(GPIO_ECHO);
-	free_irq(echo_irq, (void *)hcsr_devp);
+
 	gpio_free(GPIO_ECHO);
 	gpio_free(GPIO_ECHO_LVL_SHFTR);
 	gpio_free(GPIO_ECHO_PULL_UP);
@@ -91,6 +90,8 @@ void free_GPIOs(void){
 static int hcsr_driver_open(struct inode *inode, struct file *file){
 	int device_no = 0;
 	struct miscdevice *c;
+	int echo_irq;
+	int ret;
 
 	device_no = MINOR(inode->i_rdev);
 	printk(KERN_ALERT"\nIn open, minor no = %d\n",device_no);
@@ -116,10 +117,31 @@ static int hcsr_driver_open(struct inode *inode, struct file *file){
 			}
 		}
 	}
+
+	gpio_init(GPIO_ECHO_FMUX, STRINGIFY(GPIO_ECHO_FMUX), 2, GPIO_LOW);
+	gpio_init(GPIO_ECHO_PULL_UP, STRINGIFY(GPIO_ECHO_PULL_UP), GPIO_OUTPUT, GPIO_LOW);
+	gpio_init(GPIO_ECHO_LVL_SHFTR, STRINGIFY(GPIO_ECHO_LVL_SHFTR), GPIO_OUTPUT, GPIO_HIGH);
+	gpio_init(GPIO_ECHO, STRINGIFY(GPIO_ECHO), GPIO_INPUT, GPIO_LOW);
+	
+	gpio_init(GPIO_TRIGGER_FMUX, STRINGIFY(GPIO_TRIGGER_FMUX), 2, GPIO_LOW);
+	gpio_init(GPIO_TRIGGER_PULL_UP, STRINGIFY(GPIO_TRIGGER_PULL_UP), GPIO_OUTPUT, GPIO_LOW);
+	gpio_init(GPIO_TRIGGER_LVL_SHFTR, STRINGIFY(GPIO_TRIGGER_LVL_SHFTR), GPIO_OUTPUT, GPIO_LOW);
+	gpio_init(GPIO_TRIGGER, STRINGIFY(GPIO_TRIGGER), GPIO_OUTPUT, GPIO_LOW);
+
+	ret = request_irq(echo_irq, (irq_handler_t)echo_handler, IRQF_TRIGGER_RISING, "Echo_Dev", hcsr_devp);
+	if(ret < 0){
+		printk("Error requesting IRQ: %d\n", ret);
+	}
+
 	return 0;
 }
 
 static int hcsr_driver_close(struct inode *inode, struct file *file){
+	unsigned int echo_irq =0;
+	echo_irq = gpio_to_irq(GPIO_ECHO);
+	free_irq(echo_irq, (void *)hcsr_devp);
+	
+	free_GPIOs();
 	return 0;
 
 }
@@ -161,10 +183,10 @@ static irq_handler_t echo_handler(int irq, void *dev_id, struct pt_regs *regs)
 }
 
 int trigger_func(void* data){
-	//while(!kthread_should_stop()){
+	while(!kthread_should_stop()){
 		trigger_HCSR();
 		msleep(60);
-	//}
+	}
 }
 
 static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count, loff_t *ppos){
@@ -189,9 +211,7 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 	}
 	else if(hcsr_devp->mode == MODE_CONTINUOUS){  //continous mode 
 		if(input == STOP_CONT_TRGGR){ // stop continuous triggering
-			
-			echo_irq = gpio_to_irq(GPIO_ECHO);
-			free_irq(echo_irq, (void *)hcsr_devp);
+			kthread_stop(hcsr_devp->trigger_task_struct);
 		}
 		else if(input == START_CONT_TRIGGER){  // start continuous triggering
 			echo_irq = gpio_to_irq(GPIO_ECHO);   // associate irq to echo pin
@@ -207,6 +227,7 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 				printk("WRITE: Could not start Kthread\n");
 				return PTR_ERR(trigger_task_struct);
 			}
+			hcsr_devp->trigger_task_struct = trigger_task_struct;
 		}
 	}
 	
@@ -254,15 +275,7 @@ static struct miscdevice hcsr_dev2 = {
 static int __init hcsr_driver_init(void){
 	int ret;
 	
-	gpio_init(GPIO_ECHO_FMUX, STRINGIFY(GPIO_ECHO_FMUX), 2, GPIO_LOW);
-	gpio_init(GPIO_ECHO_PULL_UP, STRINGIFY(GPIO_ECHO_PULL_UP), GPIO_OUTPUT, GPIO_LOW);
-	gpio_init(GPIO_ECHO_LVL_SHFTR, STRINGIFY(GPIO_ECHO_LVL_SHFTR), GPIO_OUTPUT, GPIO_HIGH);
-	gpio_init(GPIO_ECHO, STRINGIFY(GPIO_ECHO), GPIO_INPUT, GPIO_LOW);
 	
-	gpio_init(GPIO_TRIGGER_FMUX, STRINGIFY(GPIO_TRIGGER_FMUX), 2, GPIO_LOW);
-	gpio_init(GPIO_TRIGGER_PULL_UP, STRINGIFY(GPIO_TRIGGER_PULL_UP), GPIO_OUTPUT, GPIO_LOW);
-	gpio_init(GPIO_TRIGGER_LVL_SHFTR, STRINGIFY(GPIO_TRIGGER_LVL_SHFTR), GPIO_OUTPUT, GPIO_LOW);
-	gpio_init(GPIO_TRIGGER, STRINGIFY(GPIO_TRIGGER), GPIO_OUTPUT, GPIO_LOW);
 
 
   hcsr_devp[0] = kmalloc(sizeof(struct hcsr_dev), GFP_KERNEL);
@@ -305,7 +318,6 @@ static int __init hcsr_driver_init(void){
 /* Driver Exit */
 void __exit hcsr_driver_exit(void){
 
-	free_GPIOs();
 
 	kfree(hcsr_devp[0]);
 	kfree(hcsr_devp[1]);
