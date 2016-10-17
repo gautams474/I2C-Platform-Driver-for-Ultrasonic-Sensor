@@ -35,6 +35,12 @@
 #define GPIO_INPUT 1
 #define GPIO_OUTPUT 0
 
+#define MODE_ONE_SHOT 0
+#define MODE_CONTINUOUS 1
+
+#define STOP_CONT_TRGGR 0
+#define START_CONT_TRIGGER 1
+
 #define STRINGIFY(x) #x
 
 static struct hcsr_dev{
@@ -189,29 +195,32 @@ static irq_handler_t echo_handler(int irq, void *dev_id, struct pt_regs *regs)
 
 
 static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count, loff_t *ppos){
-	struct hcsr_dev *hcsr_devp = file->private_data;
+	struct  *hcsr_devp = file->private_data;
 	int input, ret;
+	struct task_struct trigger_task_struct;
 	unsigned int echo_irq =0;
 	if(buf == NULL){
 		printk("buf NULL\n");
 	}
 	if(copy_from_user(&input, buf, sizeof(int)) != 0)
 		return -EFAULT;
-	// todo: remove later
-	hcsr_devp->mode = 1;
+
+	// TO DO: remove later
+	hcsr_devp->mode = MODE_CONTINUOUS;
+
 	printk("In write\n");
 	printk("mode: %d\n", input);
 
-	if(!hcsr_devp->mode){  //one shot mode
+	if(hcsr_devp->mode == MODE_ONE_SHOT){  //one shot mode
 
 	}
-	else{  //continous mode 
-		if(!input){ // stop continuous triggering
-			del_timer(&my_timer);
+	else if(hcsr_devp->mode == MODE_CONTINUOUS){  //continous mode 
+		if(input == STOP_CONT_TRGGR){ // stop continuous triggering
+			
 			echo_irq = gpio_to_irq(GPIO_ECHO);
 			free_irq(echo_irq, (void *)hcsr_devp);
 		}
-		else{  // start continuous triggering
+		else if(input == START_CONT_TRIGGER){  // start continuous triggering
 			echo_irq = gpio_to_irq(GPIO_ECHO);   // associate irq to echo pin
 
 			ret = request_irq(echo_irq, (irq_handler_t)echo_handler, IRQF_TRIGGER_RISING, "Echo_Dev", hcsr_devp);
@@ -219,7 +228,11 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 				printk("Error requesting IRQ: %d\n", ret);
 			}
 			printk("before start trigger\n");
-			start_trigger(hcsr_devp->mode,hcsr_devp->frequency);
+			trigger_task_struct = kthread_run(trigger_func, NULL, "%s-trigger_func",hcsr_devp->misc_dev->name);
+			if(IS_ERR(kthread)){
+				printk("WRITE: Could not start Kthread\n");
+				return PTR_ERR(trigger_task_struct);
+			}
 		}
 	}
 	

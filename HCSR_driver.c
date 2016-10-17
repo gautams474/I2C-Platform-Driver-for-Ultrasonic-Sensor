@@ -68,9 +68,7 @@ void gpio_init(int pin, char* name, int direction, int value){
 }
 
 void free_GPIOs(void){
-	unsigned int echo_irq =0;
-	echo_irq = gpio_to_irq(GPIO_ECHO);
-	free_irq(echo_irq, (void *)(echo_irq));
+	
 
 	gpio_free(GPIO_ECHO);
 	gpio_free(GPIO_ECHO_LVL_SHFTR);
@@ -119,21 +117,21 @@ struct timer_struct{
 
 void Start_Usonic (unsigned long data){
 	
-	struct timer_struct *timer_data = (struct timer_struct)data;
+	struct timer_struct *timer_data = (struct timer_struct *)data;
 	struct timer_list *timer = &timer_data->my_timer;
 	
-	gpio_set_value(trigger_pin, 1); //14
+	gpio_set_value(GPIO_TRIGGER, 1); //14
 	udelay(10);
-	gpio_set_value(trigger_pin, 0); //14
+	gpio_set_value(GPIO_TRIGGER, 0); //14
 	
-	if(mode){
+	if(timer_data->mode){
 		timer->expires = jiffies+timer_data->time;
 		add_timer(timer);
 	}
 	return ;
 }
 
-void start_trigger(int mode, int frequency){
+void start_trigger(int mode, int frequency ){
 	struct timer_struct timer_data;
 	timer_data.mode = mode;
 	// calculate time from frequency, replace 15
@@ -155,6 +153,8 @@ static irq_handler_t echo_handler(int irq, void *dev_id, struct pt_regs *regs)
 	static unsigned long time_rise, time_fall, time_diff;
 	static char entry =0;
 	static int i =0;
+
+	struct hcsr_dev *hcsr_devp = (struct hcsr_dev *) dev_id;
 	
  	if(entry == 0){
 	 	rdtscl(time_rise);
@@ -176,9 +176,12 @@ static irq_handler_t echo_handler(int irq, void *dev_id, struct pt_regs *regs)
 
 static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count, loff_t *ppos){
 	struct hcsr_dev *hcsr_devp = file->private_data;
-	int input;
+	int input, ret;
+	unsigned int echo_irq =0;
 	if(copy_from_user(&input, buf, sizeof(int)) != 0)
 		return -EFAULT;
+	// todo: remove later
+	hcsr_devp->mode = 1;
 
 	if(!hcsr_devp->mode){  //one shot mode
 
@@ -186,8 +189,16 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 	else{  //continous mode 
 		if(!input){ // stop continuous triggering
 			del_timer(&my_timer);
+			echo_irq = gpio_to_irq(GPIO_ECHO);
+			free_irq(echo_irq, (void *)hcsr_devp);
 		}
 		else{  // start continuous triggering
+			echo_irq = gpio_to_irq(GPIO_ECHO);   // associate irq to echo pin
+
+			ret = request_irq(echo_irq, (irq_handler_t)echo_handler, IRQF_TRIGGER_RISING, "Echo_Dev", (void *)hcsr_devp);
+			if(ret < 0){
+				printk("Error requesting IRQ: %d\n", ret);
+			}
 			start_trigger(hcsr_devp->mode,hcsr_devp->frequency);
 		}
 	}
@@ -197,12 +208,16 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 }
 
 static ssize_t hcsr_driver_read(struct file *file, char *buf, size_t count, loff_t *ppos){
-	int bytes_read = 0;
+	int bytes_read = 0, i;
 	struct hcsr_dev *hcsr_devp = file->private_data;
-	
-	if(copy_to_user(buf, &(hcsr_devp->buffer)[0] , sizeof(int)*5) != 0)
+	/*
+	if(copy_to_user(buf, &(hcsr_devp->buffer)[0] , sizeof(int)) != 0)
 		return -EFAULT;
-	
+	*/
+
+	for(i=0;i<5;i++){
+		printk(KERN_ALERT "%d: %d \n", i, hcsr_devp->buffer[i]);
+	}
 	return bytes_read;
 
 }
@@ -230,7 +245,7 @@ static struct miscdevice hcsr_dev2 = {
 };
 
 static int __init hcsr_driver_init(void){
-	int ret, echo_irq;
+	int ret;
 
 	gpio_init(GPIO_ECHO, STRINGIFY(GPIO_ECHO), GPIO_INPUT, GPIO_LOW);
 	gpio_init(GPIO_ECHO_LVL_SHFTR, STRINGIFY(GPIO_ECHO_LVL_SHFTR), GPIO_OUTPUT, GPIO_HIGH);
@@ -242,13 +257,7 @@ static int __init hcsr_driver_init(void){
 	gpio_init(GPIO_TRIGGER_PULL_UP, STRINGIFY(GPIO_TRIGGER_PULL_UP), GPIO_OUTPUT, GPIO_LOW);
 	gpio_init(GPIO_TRIGGER_FMUX, STRINGIFY(GPIO_TRIGGER_FMUX), GPIO_OUTPUT, GPIO_LOW);
 
-	echo_irq = gpio_to_irq(GPIO_ECHO);   // associate irq to echo pin
-
-	ret = request_irq(echo_irq, (irq_handler_t)echo_handler, IRQF_TRIGGER_RISING, "Echo_Dev", (void *)(echo_irq));
-	if(ret < 0)
-	{
-		printk("Error requesting IRQ: %d\n", ret);
-	}
+	
 
 
   hcsr_devp[0] = kmalloc(sizeof(struct hcsr_dev), GFP_KERNEL);
@@ -280,10 +289,10 @@ static int __init hcsr_driver_init(void){
   }
 
   hcsr_devp[0]->misc_dev = hcsr_dev1;
-  hcsr_devp[0]->minor = hcsr_dev1.minor;
+  //hcsr_devp[0]->minor = hcsr_dev1.minor;
 
   hcsr_devp[1]->misc_dev = hcsr_dev2;
-  hcsr_devp[1]->minor = hcsr_dev2.minor;
+  //hcsr_devp[1]->minor = hcsr_dev2.minor;
   return 0;
   
 }
