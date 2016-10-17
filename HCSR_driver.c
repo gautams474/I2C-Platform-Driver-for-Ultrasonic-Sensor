@@ -68,8 +68,6 @@ void gpio_init(int pin, char* name, int direction, int value){
 }
 
 void free_GPIOs(void){
-	
-
 	gpio_free(GPIO_ECHO);
 	gpio_free(GPIO_ECHO_LVL_SHFTR);
 	gpio_free(GPIO_ECHO_PULL_UP);
@@ -81,6 +79,11 @@ void free_GPIOs(void){
 	gpio_free(GPIO_TRIGGER_FMUX);
 };
 
+inline trigger_HCSR(void){
+	gpio_set_value(GPIO_TRIGGER, 1); //14
+	udelay(10);
+	gpio_set_value(GPIO_TRIGGER, 0); //14
+}
 
 static int hcsr_driver_open(struct inode *inode, struct file *file){
 	int device_no = 0;
@@ -109,45 +112,7 @@ static int hcsr_driver_close(struct inode *inode, struct file *file){
 
 }
 
-struct timer_struct{
-	struct timer_list my_timer;
-	int mode;
-	int time;
-};
-
-void Start_Usonic (unsigned long data){
-	
-	struct timer_struct *timer_data = (struct timer_struct *)data;
-	struct timer_list *timer = &timer_data->my_timer;
-	
-	gpio_set_value(GPIO_TRIGGER, 1); //14
-	udelay(10);
-	gpio_set_value(GPIO_TRIGGER, 0); //14
-	
-	if(timer_data->mode){
-		timer->expires = jiffies+timer_data->time;
-		add_timer(timer);
-	}
-	return ;
-}
-
-void start_trigger(int mode, int frequency ){
-	struct timer_struct timer_data;
-	timer_data.mode = mode;
-	// calculate time from frequency, replace 15
-	timer_data.time = mode*15;
-	timer_data.my_timer = my_timer;
-	// Initialize timer
-	my_timer.function = Start_Usonic;
-	my_timer.expires = jiffies + timer_data.time;
-	my_timer.data = (unsigned long)&timer_data; // for restart
-	init_timer(&my_timer);
-	
-	add_timer(&my_timer);
-}
-
 /// IRQ Handler
-
 static irq_handler_t echo_handler(int irq, void *dev_id, struct pt_regs *regs)
 {	
 	static unsigned long time_rise, time_fall, time_diff;
@@ -186,20 +151,20 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 	if(!hcsr_devp->mode){  //one shot mode
 
 	}
-	else{  //continous mode 
+	//continous mode 
+	else{  
 		if(!input){ // stop continuous triggering
-			del_timer(&my_timer);
 			echo_irq = gpio_to_irq(GPIO_ECHO);
 			free_irq(echo_irq, (void *)hcsr_devp);
+
 		}
 		else{  // start continuous triggering
 			echo_irq = gpio_to_irq(GPIO_ECHO);   // associate irq to echo pin
 
 			ret = request_irq(echo_irq, (irq_handler_t)echo_handler, IRQF_TRIGGER_RISING, "Echo_Dev", (void *)hcsr_devp);
-			if(ret < 0){
+			if(ret < 0)
 				printk("Error requesting IRQ: %d\n", ret);
-			}
-			start_trigger(hcsr_devp->mode,hcsr_devp->frequency);
+			
 		}
 	}
 	
