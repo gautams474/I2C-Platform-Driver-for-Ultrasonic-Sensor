@@ -79,7 +79,7 @@ void free_GPIOs(void){
 	gpio_free(GPIO_TRIGGER_FMUX);
 };
 
-inline trigger_HCSR(void){
+inline void trigger_HCSR(void){
 	gpio_set_value(GPIO_TRIGGER, 1); //14
 	udelay(10);
 	gpio_set_value(GPIO_TRIGGER, 0); //14
@@ -142,6 +142,7 @@ static irq_handler_t echo_handler(int irq, void *dev_id, struct pt_regs *regs)
 static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count, loff_t *ppos){
 	struct hcsr_dev *hcsr_devp = file->private_data;
 	int input, ret;
+	struct task_struct* trigger
 	unsigned int echo_irq =0;
 	if(copy_from_user(&input, buf, sizeof(int)) != 0)
 		return -EFAULT;
@@ -165,6 +166,7 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 			if(ret < 0)
 				printk("Error requesting IRQ: %d\n", ret);
 			
+			kthread_run
 		}
 	}
 	

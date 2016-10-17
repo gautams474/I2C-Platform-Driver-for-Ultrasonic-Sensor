@@ -35,7 +35,7 @@ int main(){
 		perror("Write Error: ");
 	}
 
-	while(i > 0){
+	while(1){
 		ret = read(fd_1,rbuf,sizeof(rbuf));
 		if(ret < 0){
 			perror("Error: ");
@@ -45,6 +45,7 @@ int main(){
 		i--;
 	}
 
+	close(fd_1);
 /*
 	ret = write(fd_2,buf2, sizeof(buf2));
 	if(ret < 0){

@@ -10,11 +10,13 @@
 #include <linux/types.h>
 #include <linux/slab.h>
 #include <linux/string.h>
+#include <linux/kthread.h>
 
 #include <linux/gpio.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/jiffies.h>
+#include <asm/msr.h>
 
 #define DEVICE_1	"HCSR_1"
 #define DEVICE_2	"HCSR_2"
@@ -47,7 +49,11 @@ static struct hcsr_dev{
 	struct miscdevice misc_dev;
 	int mode;
 	int frequency;
+<<<<<<< HEAD
 	int buffer[5];
+=======
+	unsigned long buffer[5];
+>>>>>>> upstream/master
 	struct task_struct* trigger_task_struct;
 }*hcsr_devp[2];
 
@@ -86,12 +92,44 @@ void free_GPIOs(void){
 	gpio_free(GPIO_TRIGGER_FMUX);
 };
 
+/// IRQ Handler
+static unsigned long time_rise, time_fall, time_diff;
+static irq_handler_t echo_handler(int irq, void *dev_id, struct pt_regs *regs){	
+	static char entry =0;
+	static int i =0;
+
+	struct hcsr_dev *hcsr_devp = (struct hcsr_dev *) dev_id;
+	
+ 	if(entry == 0){
+	 	rdtscl(time_rise);
+		entry =1;
+		irq_set_irq_type(irq,IRQF_TRIGGER_FALLING);
+	}
+	else{
+		rdtscl(time_fall);
+		time_diff = time_fall - time_rise;
+		hcsr_devp->buffer[0] = time_fall; //(time_diff / (58*400));
+		hcsr_devp->buffer[1] = time_rise; //(time_diff / (58*400));
+		entry =0;
+		irq_set_irq_type(irq,IRQF_TRIGGER_RISING);
+	}
+	
+	i = (i+1)%5; 	
+	
+
+	hcsr_devp->buffer[2] = 0;
+	return (irq_handler_t)IRQ_HANDLED;
+}
 
 static int hcsr_driver_open(struct inode *inode, struct file *file){
-	int device_no = 0;
+	int device_no = 0, ret = 0;
 	struct miscdevice *c;
+<<<<<<< HEAD
 	int echo_irq;
 	int ret;
+=======
+	unsigned int echo_irq =0;
+>>>>>>> upstream/master
 
 	device_no = MINOR(inode->i_rdev);
 	printk(KERN_ALERT"\nIn open, minor no = %d\n",device_no);
@@ -118,6 +156,16 @@ static int hcsr_driver_open(struct inode *inode, struct file *file){
 		}
 	}
 
+<<<<<<< HEAD
+=======
+	echo_irq = gpio_to_irq(GPIO_ECHO);   // associate irq to echo pin
+
+	ret = request_irq(echo_irq, (irq_handler_t)echo_handler, IRQF_TRIGGER_RISING, "Echo_Dev", hcsr_devp[0]);
+	if(ret < 0){
+		printk("Error requesting IRQ: %d\n", ret);
+	}
+
+>>>>>>> upstream/master
 	gpio_init(GPIO_ECHO_FMUX, STRINGIFY(GPIO_ECHO_FMUX), 2, GPIO_LOW);
 	gpio_init(GPIO_ECHO_PULL_UP, STRINGIFY(GPIO_ECHO_PULL_UP), GPIO_OUTPUT, GPIO_LOW);
 	gpio_init(GPIO_ECHO_LVL_SHFTR, STRINGIFY(GPIO_ECHO_LVL_SHFTR), GPIO_OUTPUT, GPIO_HIGH);
@@ -128,19 +176,25 @@ static int hcsr_driver_open(struct inode *inode, struct file *file){
 	gpio_init(GPIO_TRIGGER_LVL_SHFTR, STRINGIFY(GPIO_TRIGGER_LVL_SHFTR), GPIO_OUTPUT, GPIO_LOW);
 	gpio_init(GPIO_TRIGGER, STRINGIFY(GPIO_TRIGGER), GPIO_OUTPUT, GPIO_LOW);
 
+<<<<<<< HEAD
 	ret = request_irq(echo_irq, (irq_handler_t)echo_handler, IRQF_TRIGGER_RISING, "Echo_Dev", hcsr_devp);
 	if(ret < 0){
 		printk("Error requesting IRQ: %d\n", ret);
 	}
 
+=======
+>>>>>>> upstream/master
 	return 0;
 }
 
 static int hcsr_driver_close(struct inode *inode, struct file *file){
+<<<<<<< HEAD
 	unsigned int echo_irq =0;
 	echo_irq = gpio_to_irq(GPIO_ECHO);
 	free_irq(echo_irq, (void *)hcsr_devp);
 	
+=======
+>>>>>>> upstream/master
 	free_GPIOs();
 	return 0;
 
@@ -152,48 +206,23 @@ inline void trigger_HCSR(void){
 	gpio_set_value(GPIO_TRIGGER, 0); //14
 }
 
-/// IRQ Handler
-
-static irq_handler_t echo_handler(int irq, void *dev_id, struct pt_regs *regs)
-{	
-	static unsigned long time_rise, time_fall, time_diff;
-	static char entry =0;
-	static int i =0;
-
-	struct hcsr_dev *hcsr_devp = (struct hcsr_dev *) dev_id;
-	
- 	if(entry == 0){
-	 	rdtscl(time_rise);
-		entry =1;
-		irq_set_irq_type(irq,IRQF_TRIGGER_FALLING);
-	}
-	else{
-		rdtscl(time_fall);
-		time_diff = time_fall - time_rise;
-		hcsr_devp->buffer[0] = (time_diff / (58*400));
-		entry =0;
-		irq_set_irq_type(irq,IRQF_TRIGGER_RISING);
-	}
-	
-	i = (i+1)%5; 	
-	
-
-	(hcsr_devp[0])->buffer[1] = 0;
-	return (irq_handler_t)IRQ_HANDLED;
-}
-
 int trigger_func(void* data){
 	while(!kthread_should_stop()){
 		trigger_HCSR();
 		msleep(60);
 	}
+<<<<<<< HEAD
+=======
+		return 0;
+>>>>>>> upstream/master
 }
 
 static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count, loff_t *ppos){
-	struct  *hcsr_devp = file->private_data;
-	int input, ret;
-	struct task_struct trigger_task_struct;
-	unsigned int echo_irq =0;
+	struct hcsr_dev *hcsr_devp = file->private_data;
+	int input;
+	unsigned long time;
+	struct task_struct* trigger_task_struct;
+	//unsigned int echo_irq =0;
 	if(buf == NULL){
 		printk("buf NULL\n");
 	}
@@ -207,26 +236,29 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 	printk("mode: %d\n", input);
 
 	if(hcsr_devp->mode == MODE_ONE_SHOT){  //one shot mode
-
+		kthread_stop(hcsr_devp->trigger_task_struct);
 	}
 	else if(hcsr_devp->mode == MODE_CONTINUOUS){  //continous mode 
 		if(input == STOP_CONT_TRGGR){ // stop continuous triggering
+<<<<<<< HEAD
 			kthread_stop(hcsr_devp->trigger_task_struct);
+=======
+			printk("stop triggering\n");
+			
+>>>>>>> upstream/master
 		}
 		else if(input == START_CONT_TRIGGER){  // start continuous triggering
-			echo_irq = gpio_to_irq(GPIO_ECHO);   // associate irq to echo pin
-
-			ret = request_irq(echo_irq, (irq_handler_t)echo_handler, IRQF_TRIGGER_RISING, "Echo_Dev", hcsr_devp);
-			if(ret < 0){
-				printk("Error requesting IRQ: %d\n", ret);
-			}
-
-			printk("before start trigger\n");
-			trigger_task_struct = kthread_run(trigger_func, NULL, "%s-trigger_func",hcsr_devp->misc_dev->name);
-			if(IS_ERR(kthread)){
+			
+			printk("before start trigger %lu\n",rdtscl(time));
+			trigger_task_struct = kthread_run(trigger_func, NULL, "%s-trigger_func",hcsr_devp->misc_dev.name);
+			if(IS_ERR(trigger_task_struct)){
 				printk("WRITE: Could not start Kthread\n");
 				return PTR_ERR(trigger_task_struct);
 			}
+<<<<<<< HEAD
+=======
+
+>>>>>>> upstream/master
 			hcsr_devp->trigger_task_struct = trigger_task_struct;
 		}
 	}
@@ -243,8 +275,16 @@ static ssize_t hcsr_driver_read(struct file *file, char *buf, size_t count, loff
 	*/
 
 	//for(i=0;i<5;i++){
-		printk(KERN_ALERT "Reading: %d \n", hcsr_devp->buffer[0]);
-		printk(KERN_ALERT "Reading, should be 0: %d \n", hcsr_devp->buffer[1]);
+		/*printk(KERN_ALERT "Reading: %lu \n", hcsr_devp->buffer[0]);
+		printk(KERN_ALERT "Reading: %lu \n", hcsr_devp->buffer[1]);
+		printk(KERN_ALERT "Reading, should be 0: %lu \n", hcsr_devp->buffer[2]);
+
+		printk(KERN_ALERT "rise time: %lu \n", time_rise);
+		printk(KERN_ALERT "fall time: %lu \n", time_fall);*/
+		printk(KERN_ALERT "diff: %lu \n", (time_diff / (58*400)));
+		printk(KERN_ALERT "Reading, should be 0: %lu \n\n", hcsr_devp->buffer[2]);
+		msleep(1000);
+
 	//}
 	return bytes_read;
 
@@ -275,9 +315,12 @@ static struct miscdevice hcsr_dev2 = {
 static int __init hcsr_driver_init(void){
 	int ret;
 	
+<<<<<<< HEAD
 	
 
 
+=======
+>>>>>>> upstream/master
   hcsr_devp[0] = kmalloc(sizeof(struct hcsr_dev), GFP_KERNEL);
    if(!hcsr_devp[0]){
    		printk("Kmalloc failed 1\n");
@@ -317,7 +360,11 @@ static int __init hcsr_driver_init(void){
 
 /* Driver Exit */
 void __exit hcsr_driver_exit(void){
+<<<<<<< HEAD
 
+=======
+	kthread_stop(hcsr_devp[0]->trigger_task_struct);
+>>>>>>> upstream/master
 
 	kfree(hcsr_devp[0]);
 	kfree(hcsr_devp[1]);
