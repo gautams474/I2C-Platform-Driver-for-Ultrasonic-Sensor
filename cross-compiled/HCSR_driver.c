@@ -254,22 +254,25 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 		return -EFAULT;
 
 	// TO DO: remove later
-	hcsr_devp->dev_mode_pair.mode = MODE_CONTINUOUS;
+	//hcsr_devp->dev_mode_pair.mode = MODE_CONTINUOUS;
 
 	printk("In write\n");
 	printk("mode: %d\n", input);
 
 	if(hcsr_devp->dev_mode_pair.mode == MODE_ONE_SHOT){  //one shot mode
-		if(hcsr_devp->trigger_task_struct != NULL){  // if not triggered, start triggering
-			printk("before start trigger %lu\n",rdtscl(time));
-			ret = start_triggers(hcsr_devp);
-		}
-
+		
 		if(input){  // clear buffer for non zero input
 			for(i = 0; i< 5; i++){
 				hcsr_devp->buffer[i] = -1;
 			}
 		}
+
+		if(hcsr_devp->trigger_task_struct != NULL){  // if not triggered, start triggering
+			printk("before start trigger %lu\n",rdtscl(time));
+			ret = start_triggers(hcsr_devp);
+		}
+
+		
 	}
 	else if(hcsr_devp->dev_mode_pair.mode == MODE_CONTINUOUS){  //continous mode 
 		if(input == STOP_CONT_TRGGR){ // stop continuous triggering
