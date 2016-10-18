@@ -13,6 +13,7 @@
 #include <linux/kthread.h>
 
 #include <linux/gpio.h>
+#include <linux/mutex.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/jiffies.h>
@@ -41,32 +42,31 @@
 #define STRINGIFY(x) #x
 #define BUFFER_EMPTY(x) (x->size == 0 ? 1 : 0)
 
-#define IS_MODE_CONTINUOUS(x) (x->mode == MODE_CONTINUOUS ? 1 : 0)
-#define IS_MODE_ONE_SHOT(x) (x->mode == MODE_CONTINUOUS ? 1 : 0)
+#define STOP_CONT_TRGGR 0
+#define START_CONT_TRIGGER 1   
+
+#define IS_MODE_CONTINUOUS(x) (x->dev_mode_pair.mode == MODE_CONTINUOUS ? 1 : 0)
+#define IS_MODE_ONE_SHOT(x) (x->dev_mode_pair.mode == MODE_CONTINUOUS ? 1 : 0)
 #define IS_STOPPED(x) (x->trigger_task_struct == NULL ? 1 : 0)
 
 #define FREQ_TO_TIME(x) 1000/x
 
 static struct hcsr_dev{
 	struct miscdevice misc_dev;
-	/*TO DO remove comments*/
-	// unsigned int mode;
-	// unsigned int frequency;
 
 	struct gpio_pair dev_gpio_pair;
 	struct mode_pair dev_mode_pair;
 
-	unsigned long buffer[5];				// buffer and its head, tail size vars
+	long buffer[5];				// buffer and its head, tail size vars
 	int head;
 	int tail;
 	int size;
-	/*TO DO: check status logic*/
-	int status;								// if GPIO has already triggered in one shot
-
+	
 	// spinlock_t buffer_spinlock; 			// for head and tail manipulations
-	DECLARE_MUTEX(buffer_signal);			// GPIO irq handler signals non empty buffer and read func waits on it if buffer empty
+	struct semaphore buffer_signal;		// GPIO irq handler signals non empty buffer and read func waits on it if buffer empty
+	//DECLARE_MUTEX(buffer_signal);			
 
-	struct task_struct* trigger_task_struct; // kernel thread used to trigger in coninuous mode
+	struct task_struct* trigger_task_struct; // kernel thread used to trigger in coninuous mode and check state
 }*hcsr_devp[2];
 
 
@@ -125,11 +125,11 @@ static irq_handler_t echo_handler(int irq, void *dev_id, struct pt_regs *regs){
 		time_diff = time_fall - time_rise;
 		
 
-		hcsr_devp->buffer[hcsr_devp->head] = time_diff;
+		hcsr_devp->buffer[hcsr_devp->head] = time_diff/(58*400);
 		hcsr_devp->head = (hcsr_devp->head+1)%5;
 		if(hcsr_devp->head == hcsr_devp->tail)		// to ensure FIFO behavior
 			hcsr_devp->tail = (hcsr_devp->tail+1)%5;
-		size = (size +1) < 5 ? size + 1 : 5;
+		hcsr_devp->size = (hcsr_devp->size +1) < 5 ? hcsr_devp->size + 1 : 5;
 
 		irq_set_irq_type(irq,IRQF_TRIGGER_RISING);
 		up(&(hcsr_devp->buffer_signal));
@@ -182,12 +182,12 @@ static int hcsr_driver_open(struct inode *inode, struct file *file){
 	gpio_init(GPIO_ECHO_FMUX, STRINGIFY(GPIO_ECHO_FMUX), 2, GPIO_LOW);
 	gpio_init(GPIO_ECHO_PULL_UP, STRINGIFY(GPIO_ECHO_PULL_UP), GPIO_OUTPUT, GPIO_LOW);
 	gpio_init(GPIO_ECHO_LVL_SHFTR, STRINGIFY(GPIO_ECHO_LVL_SHFTR), GPIO_OUTPUT, GPIO_HIGH);
-	// gpio_init(GPIO_ECHO, STRINGIFY(GPIO_ECHO), GPIO_INPUT, GPIO_LOW);
+	gpio_init(GPIO_ECHO, STRINGIFY(GPIO_ECHO), GPIO_INPUT, GPIO_LOW); // TO DO remove
 	
 	gpio_init(GPIO_TRIGGER_FMUX, STRINGIFY(GPIO_TRIGGER_FMUX), 2, GPIO_LOW);
 	gpio_init(GPIO_TRIGGER_PULL_UP, STRINGIFY(GPIO_TRIGGER_PULL_UP), GPIO_OUTPUT, GPIO_LOW);
 	gpio_init(GPIO_TRIGGER_LVL_SHFTR, STRINGIFY(GPIO_TRIGGER_LVL_SHFTR), GPIO_OUTPUT, GPIO_LOW);
-	// gpio_init(GPIO_TRIGGER, STRINGIFY(GPIO_TRIGGER), GPIO_OUTPUT, GPIO_LOW);
+	gpio_init(GPIO_TRIGGER, STRINGIFY(GPIO_TRIGGER), GPIO_OUTPUT, GPIO_LOW); // TO DO remove
 
 	
 
@@ -209,29 +209,43 @@ inline void trigger_HCSR(void){
 
 int trigger_func(void* data){
 
-	int* freq = (int*)data;
-	int time;
+	struct hcsr_dev* hcsr_devp = (struct hcsr_dev *)data;
+	int mode = hcsr_devp->dev_mode_pair.mode;
+	int freq = hcsr_devp->dev_mode_pair.frequency, time;
 
-	if(*freq == -1)
-		time = -1;
-	else
-		time = FREQ_TO_TIME(*freq);
-
-	while(!kthread_should_stop()){
-		trigger_HCSR();
-		if(time == -1)
-			msleep(60);
-		else
+	if(mode == MODE_CONTINUOUS){
+		time = FREQ_TO_TIME(freq);
+		while(!kthread_should_stop()){
+			trigger_HCSR();
 			msleep(time);
+		}
 	}
+	else if(mode == MODE_ONE_SHOT){
+		trigger_HCSR();
+		hcsr_devp->trigger_task_struct = NULL;
+		msleep(60);  						// minimum sleep required between two triggers as mentioned in datasheet
+		//do_exit(1);		
+	}
+	return 0;
+}
+
+int start_triggers(struct hcsr_dev *hcsr_devp){
+	//int mode = hcsr_devp->mode;
+	hcsr_devp->trigger_task_struct = kthread_run(trigger_func, hcsr_devp, "%s-trigger_func",hcsr_devp->misc_dev.name);
+	if(IS_ERR(hcsr_devp->trigger_task_struct)){
+		printk("WRITE: Could not start Kthread\n");
+		return PTR_ERR(hcsr_devp->trigger_task_struct);
+	}
+
+
 	return 0;
 }
 
 static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count, loff_t *ppos){
 	struct hcsr_dev *hcsr_devp = file->private_data;
-	int input;
+	int input, ret = 0, i;
 	unsigned long time;
-	struct task_struct* trigger_task_struct;
+	
 	//unsigned int echo_irq =0;
 	if(buf == NULL){
 		printk("buf NULL\n");
@@ -240,50 +254,58 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 		return -EFAULT;
 
 	// TO DO: remove later
-	hcsr_devp->mode = MODE_CONTINUOUS;
+	hcsr_devp->dev_mode_pair.mode = MODE_CONTINUOUS;
 
 	printk("In write\n");
 	printk("mode: %d\n", input);
 
-	if(hcsr_devp->mode == MODE_ONE_SHOT){  //one shot mode
-		/*TO DO Check status */
-		kthread_stop(hcsr_devp->trigger_task_struct);
-	}
-	else if(hcsr_devp->mode == MODE_CONTINUOUS){  //continous mode 
-		if(input == STOP_CONT_TRGGR){ // stop continuous triggering
-			if(hcsr_devp->trigger_task_struct != NULL)
-				kthread_stop(hcsr_devp->trigger_task_struct);
-			printk("Stop triggeringstopped\n");
+	if(hcsr_devp->dev_mode_pair.mode == MODE_ONE_SHOT){  //one shot mode
+		if(hcsr_devp->trigger_task_struct != NULL){  // if not triggered, start triggering
+			printk("before start trigger %lu\n",rdtscl(time));
+			ret = start_triggers(hcsr_devp);
 		}
-		else if(input == START_CONT_TRIGGER){  // start continuous triggering
-			
-			printk("Before start trigger %lu\n",rdtscl(time));
-			trigger_task_struct = kthread_run(trigger_func, NULL, "%s-trigger_func",hcsr_devp->misc_dev.name);
-			if(IS_ERR(trigger_task_struct)){
-				printk("WRITE: Could not start Kthread\n");
-				return PTR_ERR(trigger_task_struct);
+
+		if(input){  // clear buffer for non zero input
+			for(i = 0; i< 5; i++){
+				hcsr_devp->buffer[i] = -1;
 			}
-			hcsr_devp->trigger_task_struct = trigger_task_struct;
+		}
+	}
+	else if(hcsr_devp->dev_mode_pair.mode == MODE_CONTINUOUS){  //continous mode 
+		if(input == STOP_CONT_TRGGR){ // stop continuous triggering
+			if(hcsr_devp->trigger_task_struct != NULL){
+				ret = kthread_stop(hcsr_devp->trigger_task_struct);
+				if(ret != -EINTR)
+					printk("triggering stopped\n");
+			}			
+		}
+		else if(input == START_CONT_TRIGGER){  // start continuous triggering			
+			printk("before start trigger %lu\n",rdtscl(time));
+			ret = start_triggers(hcsr_devp);
 		}
 	}
 	
-	return 0;
+	return ret;
 }
 
 static ssize_t hcsr_driver_read(struct file *file, char *buf, size_t count, loff_t *ppos){
 	
 	struct hcsr_dev *hcsr_devp = file->private_data;
+	unsigned long val;
 
-	if(BUFFER_EMPTY(hcsr_devp) && IS_STOPPED(hcsr_devp && IS_MODE_ONE_SHOT(hcsr_devp)))
+	if(BUFFER_EMPTY(hcsr_devp) && IS_STOPPED(hcsr_devp) && IS_MODE_ONE_SHOT(hcsr_devp))
 			trigger_HCSR();
 
 	//sleep while buffer is empty
-	unsigned long val;
-	down_interruptible(&(hcsr_devp->buffer_signal));
+	
+	if(down_interruptible(&(hcsr_devp->buffer_signal))){
+		printk(KERN_ALERT "%s semaphore interrupted\n",__FUNCTION__);
+		return -EFAULT;// semaphore interrupted
+	}
 
-	val = hcsr_devp->buffer[tail];
-	tail = (tail+1)%5;
-	size = (size -1) > 0 ? size - 1 : 0;
+	val = hcsr_devp->buffer[hcsr_devp->tail];
+	hcsr_devp->tail = (hcsr_devp->tail+1)%5;
+	hcsr_devp->size = (hcsr_devp->size -1) > 0 ? hcsr_devp->size - 1 : 0;
 	
 	/*
 	printk(KERN_ALERT "Reading: %lu \n", hcsr_devp->buffer[0]);
@@ -294,9 +316,9 @@ static ssize_t hcsr_driver_read(struct file *file, char *buf, size_t count, loff
 	printk(KERN_ALERT "fall time: %lu \n", time_fall);
 	*/
 	printk(KERN_ALERT "diff: %lu \n", (time_diff / (58*400)));
-	printk(KERN_ALERT "Reading, should be 0: %lu \n\n", hcsr_devp->buffer[2]);
+	printk(KERN_ALERT "val: %lu \n\n", val);
+	//printk(KERN_ALERT "Reading, should be 0: %lu \n\n", hcsr_devp->buffer[2]);
 	msleep(1000);
-
 
 	/*TO DO COPY TO USER*/
 	// if(copy_to_user(buf, &val, sizeof(unsigned long) != 0))
@@ -315,13 +337,14 @@ static long HCSR_ioctl(struct file *file, unsigned int cmd, unsigned long arg){
 	switch (cmd){
 		case SETMODE:
 			
-			copy_from_user(&(hcsr_devp->dev_mode_pair), arg, sizeof(unsigned mode_pair));
+			if(copy_from_user(&(hcsr_devp->dev_mode_pair), (struct mode_pair*)arg, sizeof(struct mode_pair)) != 0)
+				return -EFAULT;
 			if(hcsr_devp->dev_mode_pair.mode != MODE_CONTINUOUS || hcsr_devp->dev_mode_pair.mode != MODE_ONE_SHOT){
-				printk("%s wrong mode\n"__FUNC__);
+				printk("%s wrong mode\n",__FUNCTION__);
 				return -EFAULT;
 			}
 			if(hcsr_devp->dev_mode_pair.frequency > 16 || hcsr_devp->dev_mode_pair.frequency < 1){
-				printk("%s wrong freq %d . Enter freq between 1 and 16 Hz.\n"__FUNC__, hcsr_devp->dev_mode_pair.frequency);
+				printk("%s wrong freq %d . Enter freq between 1 and 16 Hz.\n",__FUNCTION__, hcsr_devp->dev_mode_pair.frequency);
 				return -EFAULT;
 			}
 			return 0;
@@ -336,7 +359,8 @@ static long HCSR_ioctl(struct file *file, unsigned int cmd, unsigned long arg){
 			if(hcsr_devp->dev_gpio_pair.trigger != -1)
 				gpio_free(hcsr_devp->dev_gpio_pair.trigger);
 
-		 	copy_from_user(&(hcsr_devp->dev_gpio_pair), arg, sizeof(struct gpio_pair));
+		 	if(copy_from_user(&(hcsr_devp->dev_gpio_pair), (struct gpio_pair*)arg, sizeof(struct gpio_pair)) != 0)
+		 		return -EFAULT;
 			if(hcsr_devp->dev_gpio_pair.echo < 0 || hcsr_devp->dev_gpio_pair.trigger < 0)
 				return -EFAULT;
 			
@@ -429,11 +453,17 @@ static int __init hcsr_driver_init(void){
 	hcsr_devp[1]->dev_gpio_pair.echo = -1;
 	hcsr_devp[1]->dev_gpio_pair.trigger = -1;
 
+	
+	hcsr_devp[0]->dev_mode_pair.frequency = 16;
+	hcsr_devp[1]->dev_mode_pair.frequency = 16;
+
 	hcsr_devp[0]->trigger_task_struct = NULL;
 	hcsr_devp[1]->trigger_task_struct = NULL;
 
-	return 0;
-  
+	sema_init(&(hcsr_devp[0]->buffer_signal),1);
+	sema_init(&(hcsr_devp[1]->buffer_signal),1);
+
+	return 0; 
 }
 
 /* Driver Exit */

@@ -1,6 +1,6 @@
 #define HCSR_MAGIC_NO 'P'
 #define SETMODE _IOW(HCSR_MAGIC_NO, 0, int)
-#define SETPINS _IOW(HCSR_MAGIC_NO, 0, int)
+#define SETPINS _IOW(HCSR_MAGIC_NO, 1, int)
 
 #define MODE_ONE_SHOT 0
 #define MODE_CONTINUOUS 1
