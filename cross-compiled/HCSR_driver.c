@@ -95,6 +95,9 @@ void free_GPIOs(struct hcsr_dev* hcsr_devp){
 	int trigger = hcsr_devp->dev_gpio_pair.trigger;
 	unsigned int echo_irq =0;
 
+	if(hcsr_devp->trigger_task_struct != NULL)
+		kthread_stop(hcsr_devp->trigger_task_struct);
+
 	if(echo != -1){
 		echo_irq = gpio_to_irq(echo);
 		free_irq(echo_irq, (void *)hcsr_devp);
@@ -133,7 +136,6 @@ static irq_handler_t echo_handler(int irq, void *dev_id, struct pt_regs *regs){
 
 	toggle_entry ^= 1;
 	
-
 	return (irq_handler_t)IRQ_HANDLED;
 }
 
@@ -166,12 +168,6 @@ static int hcsr_driver_open(struct inode *inode, struct file *file){
 		}
 	}
 
-	// echo_irq = gpio_to_irq(GPIO_ECHO);   // associate irq to echo pin
-
-	// ret = request_irq(echo_irq, (irq_handler_t)echo_handler, IRQF_TRIGGER_RISING, "Echo_Dev", hcsr_devp[0]);
-	// if(ret < 0){
-	// 	printk("Error requesting IRQ: %d\n", ret);
-	// }
 
 	// /*TO DO remove this after user space is implemented*/
 	// gpio_init(GPIO_ECHO_FMUX, STRINGIFY(GPIO_ECHO_FMUX), 2, GPIO_LOW);
@@ -183,12 +179,22 @@ static int hcsr_driver_open(struct inode *inode, struct file *file){
 	// gpio_init(GPIO_TRIGGER_PULL_UP, STRINGIFY(GPIO_TRIGGER_PULL_UP), GPIO_OUTPUT, GPIO_LOW);
 	// gpio_init(GPIO_TRIGGER_LVL_SHFTR, STRINGIFY(GPIO_TRIGGER_LVL_SHFTR), GPIO_OUTPUT, GPIO_LOW);
 	// gpio_init(GPIO_TRIGGER, STRINGIFY(GPIO_TRIGGER), GPIO_OUTPUT, GPIO_LOW); // TO DO remove
+
+
+	// echo_irq = gpio_to_irq(GPIO_ECHO);   // associate irq to echo pin
+
+	// ret = request_irq(echo_irq, (irq_handler_t)echo_handler, IRQF_TRIGGER_RISING, "Echo_Dev", hcsr_devp[0]);
+	// if(ret < 0){
+	// 	printk("Error requesting IRQ: %d\n", ret);
+	// }
+
+	
 	
 	return 0;
 }
 
 static int hcsr_driver_close(struct inode *inode, struct file *file){
-	free_GPIOs(file->private_data);
+	//free_GPIOs(file->private_data);
 	return 0;
 }
 
@@ -205,9 +211,11 @@ int trigger_func(void* data){
 
 	if(mode == MODE_CONTINUOUS){
 		time = FREQ_TO_TIME(freq);
+		printk("\t\tsleep time: %d\n", time);
 		while(!kthread_should_stop()){
 			trigger_HCSR(hcsr_devp);
 			msleep(time);
+			//printk("\t\ttriggered !!\n");
 		}
 	}
 	else if(mode == MODE_ONE_SHOT){
@@ -243,12 +251,7 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 		return -EFAULT;
 
 	if(hcsr_devp->dev_mode_pair.mode == MODE_ONE_SHOT){  //one shot mode
-		if(hcsr_devp->trigger_task_struct != NULL){  // if not triggered, start triggering
-			ret = start_triggers(hcsr_devp);
-		}
-		else
-			printk(KERN_ERR "%s: trigger_task_struct is null\n",__FUNCTION__);
-		
+
 		if(input){  // clear buffer for non zero input
 			for(i = 0; i< 5; i++){
 				hcsr_devp->buffer[i] = -1;
@@ -257,6 +260,12 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 				hcsr_devp->head = 0;
 			}
 		}
+
+		if(hcsr_devp->trigger_task_struct == NULL)  // if not triggered, start triggering
+			ret = start_triggers(hcsr_devp);
+		else
+			printk(KERN_ERR "%s: trigger_task_struct is not null\n",__FUNCTION__);
+
 	}
 	else if(hcsr_devp->dev_mode_pair.mode == MODE_CONTINUOUS){  //continous mode 
 		if(input == STOP_CONT_TRGGR){ // stop continuous triggering
@@ -290,6 +299,7 @@ static ssize_t hcsr_driver_read(struct file *file, char *buf, size_t count, loff
 	}
 
 	//sleep while buffer is empty
+	printk("before sleeping\n");
 	if(down_interruptible(&(hcsr_devp->buffer_signal))){
 		printk(KERN_ALERT "%s: semaphore interrupted\n",__FUNCTION__);
 		return -EFAULT;// semaphore interrupted
@@ -319,13 +329,23 @@ static long HCSR_ioctl(struct file *file, unsigned int cmd, unsigned long arg){
 			
 			if(copy_from_user(&(hcsr_devp->dev_mode_pair), (struct mode_pair*)arg, sizeof(struct mode_pair)) != 0)
 				return -EFAULT;
+<<<<<<< HEAD
 			if(hcsr_devp->dev_mode_pair.mode != MODE_CONTINUOUS && hcsr_devp->dev_mode_pair.mode != MODE_ONE_SHOT){
 				printk("%s: wrong mode %d \n",__FUNCTION__, hcsr_devp->dev_mode_pair.mode);
+=======
+
+			printk("mode : %d , freequency : %d \n",hcsr_devp->dev_mode_pair.mode, hcsr_devp->dev_mode_pair.frequency);
+			if(hcsr_devp->dev_mode_pair.mode != MODE_CONTINUOUS && hcsr_devp->dev_mode_pair.mode != MODE_ONE_SHOT){
+				printk("%s: wrong mode %d\n",__FUNCTION__, hcsr_devp->dev_mode_pair.mode);
+>>>>>>> upstream/master
 				return -EFAULT;
 			}
-			if(hcsr_devp->dev_mode_pair.frequency > 16 || hcsr_devp->dev_mode_pair.frequency < 1){
-				printk("%s: wrong freq %d . Enter freq between 1 to 16 Hz.\n",__FUNCTION__, hcsr_devp->dev_mode_pair.frequency);
-				return -EFAULT;
+
+			if(hcsr_devp->dev_mode_pair.mode == MODE_CONTINUOUS){ 
+				if(hcsr_devp->dev_mode_pair.frequency > 16 || hcsr_devp->dev_mode_pair.frequency < 1){
+					printk("%s: wrong freq %d . Enter freq between 1 to 16 Hz.\n",__FUNCTION__, hcsr_devp->dev_mode_pair.frequency);
+					return -EFAULT;
+				}
 			}
 			return 0;
 
@@ -347,7 +367,8 @@ static long HCSR_ioctl(struct file *file, unsigned int cmd, unsigned long arg){
 			gpio_init(hcsr_devp->dev_gpio_pair.echo, STRINGIFY(GPIO_ECHO), GPIO_INPUT, GPIO_LOW);
 			gpio_init(hcsr_devp->dev_gpio_pair.trigger, STRINGIFY(GPIO_TRIGGER), GPIO_OUTPUT, GPIO_LOW);
 
-			ret = request_irq(hcsr_devp->dev_gpio_pair.echo, (irq_handler_t)echo_handler, IRQF_TRIGGER_RISING, "Echo_Dev", hcsr_devp);
+			echo_irq = gpio_to_irq(hcsr_devp->dev_gpio_pair.echo);
+			ret = request_irq(echo_irq, (irq_handler_t)echo_handler, IRQF_TRIGGER_RISING, "Echo_Dev", hcsr_devp);
 			if(ret < 0){
 				printk("Error requesting IRQ: %d\n", ret);
 				return -1;
@@ -436,8 +457,8 @@ static int __init hcsr_driver_init(void){
 	hcsr_devp[0]->trigger_task_struct = NULL;
 	hcsr_devp[1]->trigger_task_struct = NULL;
 
-	sema_init(&(hcsr_devp[0]->buffer_signal),1);
-	sema_init(&(hcsr_devp[1]->buffer_signal),1);
+	sema_init(&(hcsr_devp[0]->buffer_signal),0);
+	sema_init(&(hcsr_devp[1]->buffer_signal),0);
 
 	return 0; 
 }
@@ -446,7 +467,11 @@ static int __init hcsr_driver_init(void){
 void __exit hcsr_driver_exit(void){
 
 	/*TO DO Check status before stopping both drivers*/
-	kthread_stop(hcsr_devp[0]->trigger_task_struct);
+	if(hcsr_devp[0]->trigger_task_struct != NULL)
+		kthread_stop(hcsr_devp[0]->trigger_task_struct);
+
+	if(hcsr_devp[1]->trigger_task_struct != NULL)
+		kthread_stop(hcsr_devp[1]->trigger_task_struct);
 
 	kfree(hcsr_devp[0]);
 	kfree(hcsr_devp[1]);
