@@ -204,7 +204,7 @@ int start_triggers(struct hcsr_dev *hcsr_devp){
 	hcsr_devp->trigger_task_struct = kthread_run(trigger_func, hcsr_devp, "%s-trigger_func",hcsr_devp->misc_dev.name);
 	if(IS_ERR(hcsr_devp->trigger_task_struct)){
 		printk("WRITE: Could not start Kthread\n");
-		return PTR_ERR(trigger_task_struct);
+		return PTR_ERR(hcsr_devp->trigger_task_struct);
 	}
 
 	return 0;
@@ -212,7 +212,7 @@ int start_triggers(struct hcsr_dev *hcsr_devp){
 
 static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count, loff_t *ppos){
 	struct hcsr_dev *hcsr_devp = file->private_data;
-	int input, ret, i;
+	int input, ret = 0, i;
 	unsigned long time;
 	
 	//unsigned int echo_irq =0;
