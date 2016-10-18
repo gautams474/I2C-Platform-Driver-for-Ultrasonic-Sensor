@@ -319,8 +319,8 @@ static long HCSR_ioctl(struct file *file, unsigned int cmd, unsigned long arg){
 			
 			if(copy_from_user(&(hcsr_devp->dev_mode_pair), (struct mode_pair*)arg, sizeof(struct mode_pair)) != 0)
 				return -EFAULT;
-			if(hcsr_devp->dev_mode_pair.mode != MODE_CONTINUOUS || hcsr_devp->dev_mode_pair.mode != MODE_ONE_SHOT){
-				printk("%s: wrong mode\n",__FUNCTION__);
+			if(hcsr_devp->dev_mode_pair.mode != MODE_CONTINUOUS && hcsr_devp->dev_mode_pair.mode != MODE_ONE_SHOT){
+				printk("%s: wrong mode %d \n",__FUNCTION__, hcsr_devp->dev_mode_pair.mode);
 				return -EFAULT;
 			}
 			if(hcsr_devp->dev_mode_pair.frequency > 16 || hcsr_devp->dev_mode_pair.frequency < 1){
