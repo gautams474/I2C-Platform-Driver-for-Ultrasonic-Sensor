@@ -138,10 +138,9 @@ static irq_handler_t echo_handler(int irq, void *dev_id, struct pt_regs *regs){
 }
 
 static int hcsr_driver_open(struct inode *inode, struct file *file){
-	int device_no = 0, ret = 0;
+	int device_no = 0;
 	struct miscdevice *c;
-	unsigned int echo_irq =0;
-
+	
 	device_no = MINOR(inode->i_rdev);
 	printk(KERN_ALERT"\nIn open, minor no = %d\n",device_no);
 	
@@ -212,7 +211,7 @@ int trigger_func(void* data){
 		}
 	}
 	else if(mode == MODE_ONE_SHOT){
-		trigger_HCSR();
+		trigger_HCSR(hcsr_devp);
 		hcsr_devp->trigger_task_struct = NULL;
 		msleep(60);  						// minimum sleep required between two triggers as mentioned in datasheet		
 	}
@@ -248,7 +247,7 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 			ret = start_triggers(hcsr_devp);
 		}
 		else
-			printk(KERN_ERR "%s: trigger_task_struct is null\n"__FUNCTION__);
+			printk(KERN_ERR "%s: trigger_task_struct is null\n",__FUNCTION__);
 
 		if(input){  // clear buffer for non zero input
 			for(i = 0; i< 5; i++){
@@ -282,11 +281,11 @@ static ssize_t hcsr_driver_read(struct file *file, char *buf, size_t count, loff
 	long val;
 
 	if(BUFFER_EMPTY(hcsr_devp) && IS_STOPPED(hcsr_devp) && IS_MODE_ONE_SHOT(hcsr_devp))
-			trigger_HCSR();
+			trigger_HCSR(hcsr_devp);
 
-		// to avoid against sleeping indefinately 
+		// to avoid against sleeping indefinately when continuous mode is not on
 	if(BUFFER_EMPTY(hcsr_devp) && IS_MODE_CONTINUOUS(hcsr_devp)){
-		printk(KERN_ERR"%S: Buffer empty and mode is continuous.", __FUNCTION__);
+		printk(KERN_ERR "%s: Buffer empty and mode is continuous.", __FUNCTION__);
 		return -EFAULT;
 	}
 
@@ -351,6 +350,7 @@ static long HCSR_ioctl(struct file *file, unsigned int cmd, unsigned long arg){
 			ret = request_irq(hcsr_devp->dev_gpio_pair.echo, (irq_handler_t)echo_handler, IRQF_TRIGGER_RISING, "Echo_Dev", hcsr_devp);
 			if(ret < 0){
 				printk("Error requesting IRQ: %d\n", ret);
+				return -1;
 			}
 			return 0;
 		default:
