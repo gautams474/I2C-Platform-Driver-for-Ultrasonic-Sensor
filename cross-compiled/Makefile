@@ -9,7 +9,7 @@ APP1 = main
 
 default:
 	make ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) -C $(SROOT)/usr/src/kernel M=$(PWD) modules
-	i586-poky-linux-gcc -o $(APP1) main.c --sysroot=$(SROOT)
+	i586-poky-linux-gcc -o $(APP1) main.c -Wall --sysroot=$(SROOT)
 
 clean:
 	make ARCH=x86 CROSS_COMPILE=i586-poky-linux- -C $(SROOT)/usr/src/kernel M=$(PWD) clean
