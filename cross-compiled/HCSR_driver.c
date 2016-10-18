@@ -41,7 +41,7 @@
 #define MODE_CONTINUOUS 1
 
 #define STOP_CONT_TRGGR 0
-#define START_CONT_TRIGGER 1
+#define START_CONT_TRIGGER 1  // TO DO : change this 
 
 #define STRINGIFY(x) #x
 
@@ -49,7 +49,7 @@ static struct hcsr_dev{
 	struct miscdevice misc_dev;
 	int mode;
 	int frequency;
-	unsigned long buffer[5];
+	long buffer[5];
 	struct task_struct* trigger_task_struct;
 }*hcsr_devp[2];
 
@@ -182,18 +182,39 @@ inline void trigger_HCSR(void){
 }
 
 int trigger_func(void* data){
-	while(!kthread_should_stop()){
-		trigger_HCSR();
-		msleep(60);
+	struct hcsr_dev* hcsr_devp = (struct hcsr_dev *)data;
+	int mode = hcsr_devp->mode;
+
+	if(mode == MODE_CONTINUOUS){
+		while(!kthread_should_stop()){
+			trigger_HCSR();
+			msleep(60);
+		}
 	}
-		return 0;
+	else if(mode == MODE_ONE_SHOT){
+		trigger_HCSR();
+		hcsr_devp->trigger_task_struct = NULL;
+		//do_exit(1);		
+	}
+	return 0;
+}
+
+int start_triggers(struct hcsr_dev *hcsr_devp){
+	//int mode = hcsr_devp->mode;
+	hcsr_devp->trigger_task_struct = kthread_run(trigger_func, hcsr_devp, "%s-trigger_func",hcsr_devp->misc_dev.name);
+	if(IS_ERR(hcsr_devp->trigger_task_struct)){
+		printk("WRITE: Could not start Kthread\n");
+		return PTR_ERR(trigger_task_struct);
+	}
+
+	return 0;
 }
 
 static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count, loff_t *ppos){
 	struct hcsr_dev *hcsr_devp = file->private_data;
-	int input;
+	int input, ret, i;
 	unsigned long time;
-	struct task_struct* trigger_task_struct;
+	
 	//unsigned int echo_irq =0;
 	if(buf == NULL){
 		printk("buf NULL\n");
@@ -208,27 +229,32 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 	printk("mode: %d\n", input);
 
 	if(hcsr_devp->mode == MODE_ONE_SHOT){  //one shot mode
-		kthread_stop(hcsr_devp->trigger_task_struct);
+		if(hcsr_devp->trigger_task_struct != NULL){  // if not triggered, start triggering
+			printk("before start trigger %lu\n",rdtscl(time));
+			ret = start_triggers(hcsr_devp);
+		}
+
+		if(input){  // clear buffer for non zero input
+			for(i = 0; i< 5; i++){
+				hcsr_devp->buffer[i] = -1;
+			}
+		}
 	}
 	else if(hcsr_devp->mode == MODE_CONTINUOUS){  //continous mode 
 		if(input == STOP_CONT_TRGGR){ // stop continuous triggering
-			printk("stop triggering\n");
-			
+			if(hcsr_devp->trigger_task_struct != NULL){
+				ret = kthread_stop(hcsr_devp->trigger_task_struct);
+				if(ret != -EINTR)
+					printk("triggering stopped\n");
+			}			
 		}
-		else if(input == START_CONT_TRIGGER){  // start continuous triggering
-			
+		else if(input == START_CONT_TRIGGER){  // start continuous triggering			
 			printk("before start trigger %lu\n",rdtscl(time));
-			trigger_task_struct = kthread_run(trigger_func, NULL, "%s-trigger_func",hcsr_devp->misc_dev.name);
-			if(IS_ERR(trigger_task_struct)){
-				printk("WRITE: Could not start Kthread\n");
-				return PTR_ERR(trigger_task_struct);
-			}
-
-			hcsr_devp->trigger_task_struct = trigger_task_struct;
+			ret = start_triggers(hcsr_devp);
 		}
 	}
 	
-	return 0;
+	return ret;
 }
 
 static ssize_t hcsr_driver_read(struct file *file, char *buf, size_t count, loff_t *ppos){
@@ -247,7 +273,7 @@ static ssize_t hcsr_driver_read(struct file *file, char *buf, size_t count, loff
 		printk(KERN_ALERT "rise time: %lu \n", time_rise);
 		printk(KERN_ALERT "fall time: %lu \n", time_fall);*/
 		printk(KERN_ALERT "diff: %lu \n", (time_diff / (58*400)));
-		printk(KERN_ALERT "Reading, should be 0: %lu \n\n", hcsr_devp->buffer[2]);
+		printk(KERN_ALERT "Reading, should be 0: %ld \n\n", hcsr_devp->buffer[2]);
 		msleep(1000);
 
 	//}
@@ -309,9 +335,11 @@ static int __init hcsr_driver_init(void){
   }
 
   hcsr_devp[0]->misc_dev = hcsr_dev1;
+  hcsr_devp[0]->trigger_task_struct = NULL;
   //hcsr_devp[0]->minor = hcsr_dev1.minor;
 
   hcsr_devp[1]->misc_dev = hcsr_dev2;
+  hcsr_devp[1]->trigger_task_struct = NULL;
   //hcsr_devp[1]->minor = hcsr_dev2.minor;
   return 0;
   
