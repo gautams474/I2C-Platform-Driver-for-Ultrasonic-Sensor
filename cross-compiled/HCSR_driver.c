@@ -248,7 +248,7 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 		}
 		else
 			printk(KERN_ERR "%s: trigger_task_struct is null\n",__FUNCTION__);
-
+		
 		if(input){  // clear buffer for non zero input
 			for(i = 0; i< 5; i++){
 				hcsr_devp->buffer[i] = -1;
