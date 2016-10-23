@@ -12,7 +12,7 @@ void gpio_inits(void);
 void gpio_unexport(void);
 
 int main(){
-	int fd_1 = 0, fd_2 = 0, ret = 0, res = 0;
+	int fd_1 = 0, ret = 0, res = 0;
 	int i = 10, input = 1;
 	long output;
 
@@ -23,21 +23,12 @@ int main(){
 		printf("Can not open device file.\n");		
 		return 0;
 	}
-	
-	fd_2 = open("/dev/HCSR_2", O_RDWR);
-	if (fd_2 < 0 ){
-		printf("Can not open device file.\n");		
-		return 0;
-	}
 
-	struct gpio_pair dev1_gpio, dev2_gpio;
-	struct mode_pair dev1_mode, dev2_mode;
+	struct gpio_pair dev1_gpio;
+	struct mode_pair dev1_mode;
 
 	dev1_gpio.echo = DEV_1_GPIO_ECHO;
 	dev1_gpio.trigger = DEV_1_GPIO_TRIGGER;
-
-	dev2_gpio.echo = DEV_2_GPIO_ECHO;
-	dev2_gpio.trigger = DEV_2_GPIO_TRIGGER;
 
 	res = ioctl(fd_1, SETPINS, (unsigned long)&dev1_gpio);
 	if(res < 0){
@@ -45,16 +36,8 @@ int main(){
 		return 0;
 	}
 
-	res = ioctl(fd_2, SETPINS, (unsigned long)&dev2_gpio);
-	if(res < 0){
-		perror("IOCTL Error: ");
-		return 0;
-	}
-
-	dev1_mode.mode = MODE_CONTINUOUS;
-	dev1_mode.frequency = 16;
-
-	dev2_mode.mode = MODE_ONE_SHOT;
+	dev1_mode.mode = MODE_ONE_SHOT;
+	dev1_mode.frequency = -1;
 
 	res = ioctl(fd_1,SETMODE,&dev1_mode);
 	if(res < 0){
@@ -62,55 +45,43 @@ int main(){
 		return 0;
 	}
 	
-	res = ioctl(fd_2,SETMODE,&dev2_mode);
-	if(res < 0){
-		perror("IOCTL Error: ");
-		return 0;
-	}
-
 	// write input = 1 start periodic sampling
-	ret = write(fd_1,&input, sizeof(input));
-	if(ret < 0){
-		perror("Write Error: ");
-		printf("\n");
-		fflush(stdout);
+
+	i = 10;
+	while(i > 0){
+		ret = write(fd_1,&input, sizeof(input));
+		if(ret < 0){
+			perror("Write Error: ");
+			printf("\n");
+			fflush(stdout);
+		}
+		sleep(1);
+		i--;
+		printf("write number: %d\n",i);
 	}
 
-	input = 0; // device 2 in one shot mode buffer not cleared
-	ret = write(fd_2,&input, sizeof(input));
-	if(ret < 0){
-		perror("Write Error: ");
-		printf("\n");
-		fflush(stdout);
-	}
-	
-	i = 100;
+
+	printf("user space sleeping\n");
+	if(sleep(2) < 0)
+		printf("%s: could not sleep\n", __FUNCTION__);
+
+	printf("user space reading\n");
+	fflush(stdout);
+
+	i = 10;
 	while(i > 0){
 		ret = read(fd_1,&output,sizeof(output));
 		if(ret < 0){
 			perror("Error: ");
+			continue;
 		}
 
 		//display
 		printf("Sensor 1 Distance = %ld \n",output);
 		fflush(stdout);
-		usleep(100*1000);
+		usleep(100);
 		i--;
 	}
-
-	printf("sleeping\n");
-	sleep(3);
-
-	ret = read(fd_2,&output,sizeof(output));
-	if(ret < 0){
-		perror("Error: ");
-		printf("\n");
-		fflush(stdout);
-	}
-
-	//display
-	printf("\nSensor 2 Distance = %ld\n",output);
-	fflush(stdout);
 
 	printf("dev 1 cont mode stopped\n");
 	fflush(stdout);
@@ -120,13 +91,13 @@ int main(){
 		perror("Write Error: ");
 	}
 
+
 	for(i =0; i < 6; i++){
-	// device 1 should return fault on 6th reading
-		output = -1;
+		printf( "Reading:  device 1 should return fault on 6th reading \n");
 		ret = read(fd_1,&output,sizeof(output));
 		if(ret < 0){
 			perror("Error: ");
-			break;
+			continue;
 		}
 
 		//display
@@ -134,27 +105,15 @@ int main(){
 		fflush(stdout);
 	}
 
-	printf("reading from sensor 2\n");
-	fflush(stdout);
-	//device 2 buffer is empty, read triggers one shot measurement
-	ret = read(fd_2,&output,sizeof(output));
-	if(ret < 0){
-		perror("Error: ");
-	}
-
-	//display
-	printf("\nSensor 2 Distance = %ld \n",output);
-	fflush(stdout);
-
 	printf("closing\n");
 	fflush(stdout);
 
 	close(fd_1);
-	close(fd_2);
 
 	gpio_unexport();
 	return 0;
 }
+
 
 void each_gpio_unexport(const int fd_export, const char* pin){
 	int ret;
@@ -164,7 +123,6 @@ void each_gpio_unexport(const int fd_export, const char* pin){
 		printf("%s: unexport %s failed\n", __FUNCTION__, pin);
 	
 }
-
 
 void gpio_unexport(void){
 	int fd;
@@ -261,4 +219,3 @@ void gpio_inits(void){
 
 	close(fd);
 }
-
