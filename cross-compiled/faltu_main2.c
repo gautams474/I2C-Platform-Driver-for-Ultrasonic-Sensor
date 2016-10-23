@@ -86,7 +86,7 @@ int main(){
 	printf("dev 1 cont mode stopped\n");
 	fflush(stdout);
 	input = 0; // device 1 continuous mode stopped
-	ret = write(fd_1,&input, sizeof(input));
+	ret = write(fd_1, &input, sizeof(input));
 	if(ret < 0){
 		perror("Write Error: ");
 	}
