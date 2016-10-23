@@ -36,7 +36,7 @@ int main(){
 		return 0;
 	}
 
-	dev1_mode.mode = MODE_CONTINUOUS;
+	dev1_mode.mode = MODE_ONE_SHOT;
 	dev1_mode.frequency = 16;
 
 	res = ioctl(fd_1,SETMODE,&dev1_mode);
@@ -52,7 +52,7 @@ int main(){
 		printf("\n");
 		fflush(stdout);
 	}
-
+	/*
 	printf("user space sleeping\n");
 	if(sleep(2) < 0)
 		printf("%s: could not sleep\n", __FUNCTION__);
@@ -81,9 +81,9 @@ int main(){
 	ret = write(fd_1,&input, sizeof(input));
 	if(ret < 0){
 		perror("Write Error: ");
-	}
+	}*/
 
-
+	
 	for(i =0; i < 6; i++){
 		printf( "Reading:  device 1 should return fault on 6th reading \n");
 		ret = read(fd_1,&output,sizeof(output));
@@ -96,7 +96,7 @@ int main(){
 		printf("Sensor 1 Distance = %ld \n",output);
 		fflush(stdout);
 	}
-
+	
 	printf("closing\n");
 	fflush(stdout);
 

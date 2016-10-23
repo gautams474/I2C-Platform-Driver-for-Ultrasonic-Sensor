@@ -33,9 +33,11 @@ int main(){
 	struct gpio_pair dev1_gpio, dev2_gpio;
 	struct mode_pair dev1_mode, dev2_mode;
 
+	// set device 1 echo and trigger pins using ioctl
 	dev1_gpio.echo = DEV_1_GPIO_ECHO;
 	dev1_gpio.trigger = DEV_1_GPIO_TRIGGER;
 
+	// set device 2 echo and trigger pins using ioctl
 	dev2_gpio.echo = DEV_2_GPIO_ECHO;
 	dev2_gpio.trigger = DEV_2_GPIO_TRIGGER;
 
@@ -51,9 +53,11 @@ int main(){
 		return 0;
 	}
 
+	// set device 1 in Continuous mode
 	dev1_mode.mode = MODE_CONTINUOUS;
 	dev1_mode.frequency = 16;
 
+	// set device 2 in one shot mode
 	dev2_mode.mode = MODE_ONE_SHOT;
 
 	res = ioctl(fd_1,SETMODE,&dev1_mode);
@@ -68,7 +72,7 @@ int main(){
 		return 0;
 	}
 
-	// write input = 1 start periodic sampling
+	// write input = 1 start periodic sampling for device 1
 	ret = write(fd_1,&input, sizeof(input));
 	if(ret < 0){
 		perror("Write Error: ");
@@ -76,7 +80,8 @@ int main(){
 		fflush(stdout);
 	}
 
-	input = 0; // device 2 in one shot mode buffer not cleared
+	// device 2 in one shot mode buffer not cleared, trigger measurement
+	input = 0; 
 	ret = write(fd_2,&input, sizeof(input));
 	if(ret < 0){
 		perror("Write Error: ");
@@ -84,6 +89,7 @@ int main(){
 		fflush(stdout);
 	}
 	
+	// read device 1 value 100 times, may sleep if buffer is empty
 	i = 100;
 	while(i > 0){
 		ret = read(fd_1,&output,sizeof(output));
@@ -101,6 +107,7 @@ int main(){
 	printf("sleeping\n");
 	sleep(3);
 
+	// read device 2 value, triggered earlier
 	ret = read(fd_2,&output,sizeof(output));
 	if(ret < 0){
 		perror("Error: ");
@@ -108,20 +115,22 @@ int main(){
 		fflush(stdout);
 	}
 
-	//display
+	//display device 2 value
 	printf("\nSensor 2 Distance = %ld\n",output);
 	fflush(stdout);
 
-	printf("dev 1 cont mode stopped\n");
-	fflush(stdout);
-	input = 0; // device 1 continuous mode stopped
+	// device 1 continuous mode stopped
+	input = 0; 
 	ret = write(fd_1,&input, sizeof(input));
 	if(ret < 0){
 		perror("Write Error: ");
 	}
 
+	printf("dev 1 continuous mode stopped\n");
+	fflush(stdout);
+
 	for(i =0; i < 6; i++){
-	// device 1 should return fault on 6th reading
+	// device 1 should return fault on 6th reading as continuos mode stopped, buffer size = 5
 		output = -1;
 		ret = read(fd_1,&output,sizeof(output));
 		if(ret < 0){
@@ -136,7 +145,7 @@ int main(){
 
 	printf("reading from sensor 2\n");
 	fflush(stdout);
-	//device 2 buffer is empty, read triggers one shot measurement
+	//device 2 read shows previous value triggered by write, read  also triggers another one shot measurement
 	ret = read(fd_2,&output,sizeof(output));
 	if(ret < 0){
 		perror("Error: ");

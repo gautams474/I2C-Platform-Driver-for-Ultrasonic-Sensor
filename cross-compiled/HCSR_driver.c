@@ -143,9 +143,11 @@ static irq_handler_t echo_handler(int irq, void *dev_id, struct pt_regs *regs){
 		
 		hcsr_devp->buffer[hcsr_devp->head] = time_diff/(58*400);
 		hcsr_devp->head = ((hcsr_devp->head) + 1) % 5;
-		if(hcsr_devp->head == hcsr_devp->tail)		// to ensure FIFO behavior
-			hcsr_devp->tail = (hcsr_devp->tail+1)%5;
 		hcsr_devp->size = (hcsr_devp->size +1) < 6 ? hcsr_devp->size + 1 : 5;
+		
+		if((hcsr_devp->head == (hcsr_devp->tail + 1)) && (hcsr_devp->size == 5))		// to ensure FIFO behavior
+			hcsr_devp->tail = (hcsr_devp->tail+1)%5;
+
 
 		irq_set_irq_type(irq,IRQF_TRIGGER_RISING);
 		up(&(hcsr_devp->buffer_signal));
@@ -217,6 +219,9 @@ int trigger_func(void* data){
 	}
 	else if(mode == MODE_ONE_SHOT){
 		trigger_HCSR(hcsr_devp);
+		#if DEBUG
+				printk("\t\t%s: %s triggered !!\n",__FUNCTION__, hcsr_devp->misc_dev.name);
+			#endif
 		msleep(60);  						// minimum sleep required between two triggers as mentioned in datasheet		
 	}
 	else
@@ -251,17 +256,25 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 		return -EFAULT;
 
 	if(hcsr_devp->dev_mode_pair.mode == MODE_ONE_SHOT){  //one shot mode
-		hcsr_devp->size = 0;
-		hcsr_devp->tail = 0;
-		hcsr_devp->head = 0;
-		if(input)  // clear buffer for non zero input
+		
+		if(input){ // clear buffer for non zero input
+
+			// for(i=0;i<hcsr_devp->size;i++){
+			// 	down_interruptible(&(hcsr_devp->buffer_signal));
+			// }
+
 			for(i = 0; i< 5; i++)
 				hcsr_devp->buffer[i] = -1;
 
-		#if DEBUG
-			printk("%s: buffer cleared\n",__FUNCTION__);
-		#endif
-		
+			hcsr_devp->size = 0;
+			hcsr_devp->tail = 0;
+			hcsr_devp->head = 0;
+
+			#if DEBUG
+				printk("%s: buffer cleared\n",__FUNCTION__);
+			#endif
+
+		}
 		if(hcsr_devp->trigger_task_struct == NULL)  // if not triggered, start triggering
 			ret = start_triggers(hcsr_devp);
 		else
@@ -287,19 +300,24 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 static ssize_t hcsr_driver_read(struct file *file, char *buf, size_t count, loff_t *ppos){
 	
 	struct hcsr_dev *hcsr_devp = file->private_data;
+	int i;
 	long val;
 
-	if(BUFFER_EMPTY(hcsr_devp) && IS_STOPPED(hcsr_devp) && IS_MODE_ONE_SHOT(hcsr_devp)){
-			trigger_HCSR(hcsr_devp);
+	if(/*BUFFER_EMPTY(hcsr_devp) && */IS_STOPPED(hcsr_devp) && IS_MODE_ONE_SHOT(hcsr_devp)){
+			start_triggers(hcsr_devp);
 			#if DEBUG
 				printk(KERN_ALERT "%s: triggering in one shot mode\n",__FUNCTION__);
 			#endif
-		}
+	}
+	else
+		printk(KERN_ERR "%s: trigger_task_struct is not null\n",__FUNCTION__);
+
 	// Avoids sleeping indefinately when continuous mode is not on
 	if(BUFFER_EMPTY(hcsr_devp) && IS_MODE_CONTINUOUS(hcsr_devp)){
 		#if DEBUG
 		printk(KERN_ERR "%s: Buffer empty and mode is continuous.\n", __FUNCTION__);
 		#endif
+		//printk("mode : %d , frequency : %d \n",hcsr_devp->dev_mode_pair.mode, hcsr_devp->dev_mode_pair.frequency);
 		return -EINPROGRESS;
 	}
 
@@ -315,12 +333,18 @@ static ssize_t hcsr_driver_read(struct file *file, char *buf, size_t count, loff
 	}
 
 	val = hcsr_devp->buffer[hcsr_devp->tail];
-	hcsr_devp->tail = (hcsr_devp->tail+1)%5;
-	hcsr_devp->size = (hcsr_devp->size -1) > 0 ? hcsr_devp->size - 1 : 0;
 
 	#if DEBUG
-	printk(KERN_ALERT "val: %ld time_diff: %ld\n\n", val, time_diff/(58l*400l));
+	printk(KERN_ALERT "val: %ld time_diff: %ld head: %d tail: %d\n\n", val, time_diff/(58l*400l), hcsr_devp->head, hcsr_devp->tail );
+	printk(KERN_ALERT "Buffer :");
+	for(i=0; i<5; i++){
+		printk(KERN_ALERT " %ld", hcsr_devp->buffer[i]);
+	}
+	printk(KERN_ALERT "\n");
 	#endif
+
+	hcsr_devp->tail = (hcsr_devp->tail+1)%5;
+	hcsr_devp->size = (hcsr_devp->size -1) > 0 ? hcsr_devp->size - 1 : 0;
 
 	
 	if(copy_to_user(buf, &val, sizeof(long)) != 0)
@@ -342,7 +366,7 @@ static long HCSR_ioctl(struct file *file, unsigned int cmd, unsigned long arg){
 			if(copy_from_user(&(hcsr_devp->dev_mode_pair), (struct mode_pair*)arg, sizeof(struct mode_pair)) != 0)
 				return -EFAULT;
 
-			// printk("mode : %d , frequency : %d \n",hcsr_devp->dev_mode_pair.mode, hcsr_devp->dev_mode_pair.frequency);
+			 printk("mode : %d , frequency : %d \n",hcsr_devp->dev_mode_pair.mode, hcsr_devp->dev_mode_pair.frequency);
 			if(hcsr_devp->dev_mode_pair.mode != MODE_CONTINUOUS && hcsr_devp->dev_mode_pair.mode != MODE_ONE_SHOT){
 				printk("%s: wrong mode %d\n",__FUNCTION__, hcsr_devp->dev_mode_pair.mode);
 				

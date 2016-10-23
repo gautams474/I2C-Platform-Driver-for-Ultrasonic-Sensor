@@ -13,7 +13,7 @@ void gpio_unexport(void);
 
 int main(){
 	int fd_1 = 0, ret = 0, res = 0;
-	int i = 10, input = 1;
+	int i = 10, input = 0;
 	long output;
 
 	gpio_inits();
@@ -37,7 +37,7 @@ int main(){
 	}
 
 	dev1_mode.mode = MODE_ONE_SHOT;
-	dev1_mode.frequency = -1;
+	dev1_mode.frequency = 16;
 
 	res = ioctl(fd_1,SETMODE,&dev1_mode);
 	if(res < 0){
@@ -46,7 +46,7 @@ int main(){
 	}
 	
 	// write input = 1 start periodic sampling
-
+	
 	i = 10;
 	while(i > 0){
 		ret = write(fd_1,&input, sizeof(input));
@@ -57,7 +57,18 @@ int main(){
 		}
 		sleep(1);
 		i--;
-		printf("write number: %d\n",i);
+		printf("read number: %d\n",i);
+
+		ret = read(fd_1,&output,sizeof(output));
+		if(ret < 0){
+			perror("Error: ");
+			continue;
+		}
+
+		//display
+		printf("Sensor 1 Distance = %ld \n",output);
+		fflush(stdout);
+		usleep(100*1000);
 	}
 
 
@@ -67,7 +78,7 @@ int main(){
 
 	printf("user space reading\n");
 	fflush(stdout);
-
+	/*
 	i = 10;
 	while(i > 0){
 		ret = read(fd_1,&output,sizeof(output));
@@ -82,10 +93,10 @@ int main(){
 		usleep(100);
 		i--;
 	}
-
-	printf("dev 1 cont mode stopped\n");
-	fflush(stdout);
-	input = 0; // device 1 continuous mode stopped
+	*/
+	//printf("dev 1 cont mode stopped\n");
+	//fflush(stdout);
+	input = 1; // device 1 continuous mode stopped
 	ret = write(fd_1,&input, sizeof(input));
 	if(ret < 0){
 		perror("Write Error: ");
@@ -103,6 +114,7 @@ int main(){
 		//display
 		printf("Sensor 1 Distance = %ld \n",output);
 		fflush(stdout);
+		sleep(1);
 	}
 
 	printf("closing\n");
