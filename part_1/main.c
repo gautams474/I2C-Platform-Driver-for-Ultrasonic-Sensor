@@ -19,14 +19,14 @@ int main(){
 	gpio_inits();
 
 	fd_1 = open("/dev/HCSR_1", O_RDWR);
-	if (fd_1< 0 ){
-		printf("Can not open device file.\n");		
+	if (fd_1 < 0 ){
+		printf("Can not open device file 1.\n");		
 		return 0;
 	}
 	
 	fd_2 = open("/dev/HCSR_2", O_RDWR);
 	if (fd_2 < 0 ){
-		printf("Can not open device file.\n");		
+		printf("Can not open device file 2.\n");		
 		return 0;
 	}
 
@@ -78,9 +78,9 @@ int main(){
 		fflush(stdout);
 	}
 	
-	printf("Reading from HCSR_1 100 times\n");
+	printf("Reading from HCSR_1 25 times\n");
 	// read device 1 value 100 times, may sleep if buffer is empty
-	i = 100;
+	i = 25;
 	while(i > 0){
 		ret = read(fd_1,&output,sizeof(output));
 		if(ret < 0){
@@ -151,31 +151,30 @@ int main(){
 		fflush(stdout);
 	}
 
-	printf("Reading from HCSR_2 which was triggered earlier\n");
-	// read device 2 value, triggered earlier
-	ret = read(fd_2,&output,sizeof(output));
-	if(ret < 0){
-		perror("Error: ");
-		printf("\n");
+	// printf("Reading from HCSR_2 which was triggered earlier\n");
+	// // read device 2 value, triggered earlier
+	// ret = read(fd_2,&output,sizeof(output));
+	// if(ret < 0){
+	// 	perror("Error: ");
+	// 	printf("\n");
+	// 	fflush(stdout);
+	// }
+
+	// //display device 2 value
+	// printf("\nSensor 2 Distance = %ld\n",output);
+	// fflush(stdout);
+
+	for(i=0; i< 25; i++){
+	//device 2 read shows previous value triggered by write, read  also triggers another one shot measurement
+		ret = read(fd_2,&output,sizeof(output));
+		if(ret < 0){
+			perror("Error: ");
+		}
+
+		//display
+		printf("Sensor 2 Distance = %ld \n",output);
 		fflush(stdout);
 	}
-
-	//display device 2 value
-	printf("\nSensor 2 Distance = %ld\n",output);
-	fflush(stdout);
-
-	printf("Reading from sensor 2\n");
-	fflush(stdout);
-	//device 2 read shows previous value triggered by write, read  also triggers another one shot measurement
-	ret = read(fd_2,&output,sizeof(output));
-	if(ret < 0){
-		perror("Error: ");
-	}
-
-	//display
-	printf("\nSensor 2 Distance = %ld \n",output);
-	fflush(stdout);
-
 	printf("closing\n");
 	fflush(stdout);
 

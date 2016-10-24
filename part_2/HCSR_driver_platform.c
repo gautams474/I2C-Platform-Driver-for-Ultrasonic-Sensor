@@ -52,6 +52,7 @@
 
 #define FREQ_TO_TIME(x) 1000/x
 
+
 struct hcsr_dev{
 	struct miscdevice misc_dev;
 	struct platform_device platform_dev;
@@ -65,7 +66,7 @@ struct hcsr_dev{
 	int size;
 
 	unsigned int upcount;
-	
+	int enable;
 	struct semaphore buffer_signal;		// GPIO irq handler signals non empty buffer and read func waits on it if buffer empty
 	
 	struct task_struct* trigger_task_struct; // kernel thread used to trigger in coninuous mode and check state
@@ -149,7 +150,7 @@ static irq_handler_t echo_handler(int irq, void *dev_id, struct pt_regs *regs){
 		
 		hcsr_devp->buffer[hcsr_devp->head] = time_diff/(58ul*400ul);
 		hcsr_devp->head = ((hcsr_devp->head)+1) % 5;
-		hcsr_devp->size = max(hcsr_devp->size+1, 5);												//(hcsr_devp->size +1) < 6 ? hcsr_devp->size + 1 : 5;
+		hcsr_devp->size = min(hcsr_devp->size+1, 5);												//(hcsr_devp->size +1) < 6 ? hcsr_devp->size + 1 : 5;
 		if((hcsr_devp->head == (hcsr_devp->tail + 1)%5) && (hcsr_devp->size == 5))		// to ensure FIFO behavior
 			hcsr_devp->tail = (hcsr_devp->head+1) % 5;
 
@@ -219,7 +220,7 @@ int trigger_func(void* data){
 			trigger_HCSR(hcsr_devp);
 			msleep(time);
 			#if DEBUG
-				printk("\t\t%s: %s triggered !!\n",__FUNCTION__, hcsr_devp->misc_dev.name);
+				//printk("\t\t%s: %s triggered !!\n",__FUNCTION__, hcsr_devp->misc_dev.name);
 			#endif
 		}
 	}
@@ -257,6 +258,11 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 	struct hcsr_dev *hcsr_devp = file->private_data;
 	int input, ret = 0, i;
 	unsigned long time;
+
+	if(hcsr_devp->enable == 0){
+		printk("enable not set\n");
+		return -EFAULT;
+	}
 	
 	if(buf == NULL){
 		printk("%s: buf NULL\n",__FUNCTION__);
@@ -326,10 +332,18 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 }
 
 static ssize_t hcsr_driver_read(struct file *file, char *buf, size_t count, loff_t *ppos){
-	
+	#if DEBUG
+	int i;
+	#endif
+
 	struct hcsr_dev *hcsr_devp = file->private_data;
-	// int i;
+	
 	long val;
+
+	if(hcsr_devp->enable == 0){
+		printk("enable not set\n");
+		return -EFAULT;
+	}
 	
 	if(/*BUFFER_EMPTY(hcsr_devp) && IS_STOPPED(hcsr_devp)  &&*/ IS_MODE_ONE_SHOT(hcsr_devp)){
 			trigger_HCSR(hcsr_devp);
@@ -373,8 +387,7 @@ static ssize_t hcsr_driver_read(struct file *file, char *buf, size_t count, loff
 	#endif
 
 	hcsr_devp->tail = (hcsr_devp->tail+1)%5;
-	hcsr_devp->size = (hcsr_devp->size -1) > 0 ? hcsr_devp->size - 1 : 0;
-
+	hcsr_devp->size = max(hcsr_devp->size -1, 0);
 	
 	if(copy_to_user(buf, &val, sizeof(long)) != 0)
 		return -EFAULT;
@@ -463,8 +476,13 @@ static struct file_operations hcsr_fops = {
 #define CLASS_NAME "HCSR"
 
 static ssize_t hcsr_show(struct device *dev, struct device_attribute *attr, char *buf){
-	
+	int latestReadead = -1;
 	struct hcsr_dev* hcsr_devp;
+	int head;
+	#if DEBUG
+		int i;
+	#endif
+	
 	printk("before get drvdata\n");
 	hcsr_devp = dev_get_drvdata(dev);
 	if(!strcmp(attr->attr.name, "trigger")){
@@ -472,12 +490,167 @@ static ssize_t hcsr_show(struct device *dev, struct device_attribute *attr, char
 		printk("after get drvdata\n");
         return scnprintf(buf, PAGE_SIZE, "%d\n", hcsr_devp->dev_gpio_pair.trigger);
 	}
-	
+	else if (!strcmp(attr->attr.name, "echo")){
+		return scnprintf(buf, PAGE_SIZE, "%d\n", hcsr_devp->dev_gpio_pair.echo);
+	}
+	else if (!strcmp(attr->attr.name, "mode")){
+		return scnprintf(buf, PAGE_SIZE, "%d\n", hcsr_devp->dev_mode_pair.mode);
+	}
+	else if (!strcmp(attr->attr.name, "frequency")){
+		return scnprintf(buf, PAGE_SIZE, "%d\n", hcsr_devp->dev_mode_pair.frequency);
+	}
+	else if (!strcmp(attr->attr.name, "enable")){
+		return scnprintf(buf, PAGE_SIZE, "%d\n", hcsr_devp->enable);
+	}
+	else if (!strcmp(attr->attr.name, "distance")){
+		head = hcsr_devp->head;
+		latestReadead = (head -1 < 0 ? 5: head -1);
+		#if DEBUG
+			printk(KERN_ALERT "val: %ld head: %d tail: %d\n", time_diff/(58l*400l), hcsr_devp->head, hcsr_devp->tail );
+			printk(KERN_ALERT "time_diff: %lu time_rise: %lu time_fall: %lu\n\n", time_diff, time_rise, time_fall);
+			printk(KERN_ALERT "Buffer :");
+			for(i=0; i<5; i++){
+				printk(" %ld", hcsr_devp->buffer[i]);
+			}
+			printk(KERN_ALERT "\n");
+		#endif
+		return scnprintf(buf, PAGE_SIZE, "%d\n", latestReadead);
+	}
 	return -EINVAL;
 }
 
+int return_bytes_read(int num);
+
 static ssize_t hcsr_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count){
-    return -EINVAL;
+	struct hcsr_dev* hcsr_devp;
+	int input, ret = 1;
+	int echo_irq = 0;
+	//int bytes_read = 0;
+
+	sscanf(buf, "%d", &input);
+	printk("entering store, input = %d\n", input);
+	hcsr_devp = dev_get_drvdata(dev);
+
+	if(!strcmp(attr->attr.name, "trigger")){
+		
+		//check input
+		if(input < 0)
+			return -EINVAL;
+
+		if(hcsr_devp->dev_gpio_pair.trigger != -1)
+			gpio_free(hcsr_devp->dev_gpio_pair.trigger);
+
+		hcsr_devp->dev_gpio_pair.trigger = input;
+		
+		gpio_init(hcsr_devp->dev_gpio_pair.trigger, STRINGIFY(GPIO_TRIGGER), GPIO_OUTPUT, GPIO_LOW);
+		
+		printk(KERN_ALERT"%s: echo: %d  echo_irq: %d trigger: %d   for device %s\n",
+							__FUNCTION__, hcsr_devp->dev_gpio_pair.echo, gpio_to_irq(hcsr_devp->dev_gpio_pair.echo), hcsr_devp->dev_gpio_pair.trigger, hcsr_devp->misc_dev.name);
+		
+        return PAGE_SIZE;
+	}
+	else if (!strcmp(attr->attr.name, "echo")){
+		
+	 	//check input
+		if(input < 0)
+			return -EINVAL;
+
+		if(hcsr_devp->dev_gpio_pair.echo != -1){
+			echo_irq = gpio_to_irq(hcsr_devp->dev_gpio_pair.echo);
+			free_irq(echo_irq, (void *)hcsr_devp);
+			gpio_free(hcsr_devp->dev_gpio_pair.echo);
+	 	}
+
+		hcsr_devp->dev_gpio_pair.echo = input;
+		gpio_init(hcsr_devp->dev_gpio_pair.echo, STRINGIFY(GPIO_ECHO), GPIO_INPUT, -1);
+
+		echo_irq = gpio_to_irq(hcsr_devp->dev_gpio_pair.echo);
+		ret = request_irq(echo_irq, (irq_handler_t)echo_handler, IRQF_TRIGGER_RISING, "Echo_Dev", hcsr_devp);
+		if(ret < 0){
+			printk("Error requesting IRQ: %d\n", ret);
+			return -EFAULT;
+		}
+
+		printk(KERN_ALERT"%s: echo: %d  echo_irq: %d trigger: %d   for device %s\n",
+							__FUNCTION__, hcsr_devp->dev_gpio_pair.echo, echo_irq, hcsr_devp->dev_gpio_pair.trigger, hcsr_devp->misc_dev.name);
+
+		return PAGE_SIZE;
+	}
+	else if (!strcmp(attr->attr.name, "mode")){
+
+		if(input != MODE_CONTINUOUS && input != MODE_ONE_SHOT){
+			printk("%s: wrong mode %d\n",__FUNCTION__, input);
+			return -EFAULT;
+		}
+
+		hcsr_devp->dev_mode_pair.mode = input;
+	
+		#if DEBUG
+			printk("mode : %d , frequency : %d \n",hcsr_devp->dev_mode_pair.mode, hcsr_devp->dev_mode_pair.frequency);
+		#endif
+		return PAGE_SIZE;
+	}
+	else if (!strcmp(attr->attr.name, "frequency")){
+
+		if(input > 16 || input < 1){
+			printk("%s: wrong freq %d . Enter freq between 1 to 16 Hz.\n",__FUNCTION__, input);
+			return -EFAULT;
+		}
+		hcsr_devp->dev_mode_pair.frequency = input;
+		#if DEBUG
+			printk("mode : %d , frequency : %d \n",hcsr_devp->dev_mode_pair.mode, hcsr_devp->dev_mode_pair.frequency);
+		#endif
+		return PAGE_SIZE;
+	}
+	else if (!strcmp(attr->attr.name, "enable")){
+		printk("inside enable store\n");
+		if(!(input == 0 || input == 1)){
+			printk("%s: Wrong value of enable %d\n",__FUNCTION__, input);
+			return -EINVAL;
+		}
+		hcsr_devp->enable = input;
+
+		if(hcsr_devp->dev_mode_pair.mode == -1 || hcsr_devp->dev_gpio_pair.trigger == -1 || hcsr_devp->dev_gpio_pair.echo == -1){
+			printk("Mode or Gpio not set, mode = %d, echo = %d, trigger = %d\n",
+										hcsr_devp->dev_mode_pair.mode, hcsr_devp->dev_gpio_pair.echo, hcsr_devp->dev_gpio_pair.trigger);
+			return -EFAULT;
+		}/*
+		if(input == 1){
+			if(IS_MODE_ONE_SHOT(hcsr_devp)){
+				trigger_HCSR(hcsr_devp);
+				msleep(60);
+				printk("triggered\n");
+				return 1;
+			}
+			else if(IS_MODE_CONTINUOUS(hcsr_devp)){
+				ret = start_triggers(hcsr_devp);
+				if(ret == 0){
+					return 1;
+				}
+			}
+		}
+		if(input == 0){
+
+			if(IS_MODE_CONTINUOUS(hcsr_devp)){
+				if(hcsr_devp->trigger_task_struct != NULL){
+					ret = kthread_stop(hcsr_devp->trigger_task_struct);
+					if(ret != -EINTR)
+						printk("triggering stopped\n");
+				}
+				return 1;
+			}
+			else if(IS_MODE_ONE_SHOT(hcsr_devp)){
+				return 1;
+			}
+		}*/
+	}
+	else if (!strcmp(attr->attr.name, "distance")){
+		printk("distance setting not allowed");
+		return -EINVAL;
+			
+	}
+	return -EINVAL;
+
 }
 
 static DEVICE_ATTR(trigger,		S_IRUGO | S_IWUGO, hcsr_show, hcsr_store);
@@ -521,6 +694,7 @@ static int platform_hcsr_probe(struct platform_device* pdev){
 	hcsr_devp->dev_mode_pair.frequency = 16;
 
 	hcsr_devp->upcount = 0;
+	hcsr_devp->enable = 1;
 
 	hcsr_devp->trigger_task_struct = NULL;
 
@@ -609,6 +783,12 @@ static int __init platform_hcsr_driver_init(void){
 
 /* Driver Exit */
 void __exit platform_hcsr_driver_exit(void){
+	int i;
+	for(i=0;i<no_of_devices;i++)
+		device_destroy(hcsr_class, hcsr_dev[i]);
+
+	class_unregister(hcsr_class);
+	class_destroy(hcsr_class);
 	platform_driver_unregister(&platform_HCSR04);
 	printk("hcsr platform driver removed.\n");
 }
