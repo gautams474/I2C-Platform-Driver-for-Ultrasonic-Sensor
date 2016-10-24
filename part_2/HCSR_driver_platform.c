@@ -149,7 +149,7 @@ static irq_handler_t echo_handler(int irq, void *dev_id, struct pt_regs *regs){
 		
 		hcsr_devp->buffer[hcsr_devp->head] = time_diff/(58ul*400ul);
 		hcsr_devp->head = ((hcsr_devp->head)+1) % 5;
-		hcsr_devp->size = max(hcsr_devp->size+1, 5);												//(hcsr_devp->size +1) < 6 ? hcsr_devp->size + 1 : 5;
+		hcsr_devp->size = min(hcsr_devp->size+1, 5);												//(hcsr_devp->size +1) < 6 ? hcsr_devp->size + 1 : 5;
 		if((hcsr_devp->head == (hcsr_devp->tail + 1)%5) && (hcsr_devp->size == 5))		// to ensure FIFO behavior
 			hcsr_devp->tail = (hcsr_devp->head+1) % 5;
 
@@ -373,8 +373,7 @@ static ssize_t hcsr_driver_read(struct file *file, char *buf, size_t count, loff
 	#endif
 
 	hcsr_devp->tail = (hcsr_devp->tail+1)%5;
-	hcsr_devp->size = (hcsr_devp->size -1) > 0 ? hcsr_devp->size - 1 : 0;
-
+	hcsr_devp->size = max(hcsr_devp->size -1, 0);
 	
 	if(copy_to_user(buf, &val, sizeof(long)) != 0)
 		return -EFAULT;

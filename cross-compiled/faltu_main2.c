@@ -47,7 +47,7 @@ int main(){
 	
 	// write input = 1 start periodic sampling
 	
-	i = 10;
+	i = 20;
 	while(i > 0){
 		ret = write(fd_1,&input, sizeof(input));
 		if(ret < 0){
@@ -107,7 +107,7 @@ int main(){
 	}
 
 
-	for(i =0; i < 6; i++){
+	for(i =0; i < 25; i++){
 		printf( "Reading:  device 1 should return fault on 6th reading \n");
 		ret = read(fd_1,&output,sizeof(output));
 		if(ret < 0){
@@ -118,7 +118,7 @@ int main(){
 		//display
 		printf("Sensor 1 Distance = %ld \n",output);
 		fflush(stdout);
-		sleep(1);
+		usleep(100*1000);
 	}
 
 	printf("closing\n");
