@@ -209,7 +209,7 @@ inline void trigger_HCSR(struct hcsr_dev* hcsr_devp){
 
 int trigger_func(void* data){
 	struct hcsr_dev* hcsr_devp = (struct hcsr_dev *)data;
-	int mode = hcsr_devp->dev_mode_pair.mode;
+	//int mode = hcsr_devp->dev_mode_pair.mode;
 	int freq = hcsr_devp->dev_mode_pair.frequency, time;
 
 	if(IS_MODE_CONTINUOUS(hcsr_devp)/*mode == MODE_CONTINUOUS*/){
@@ -277,7 +277,7 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 			for(i=0; i < hcsr_devp->upcount; i++){
 				if(down_interruptible(&(hcsr_devp->buffer_signal))){
 					printk(KERN_ALERT "%s: semaphore interrupted\n",__FUNCTION__);
-					system_abort();
+					platform_system_abort(hcsr_devp);
 					return -EFAULT;// semaphore interrupted
 				}
 			}
@@ -354,7 +354,7 @@ static ssize_t hcsr_driver_read(struct file *file, char *buf, size_t count, loff
 
 	if(down_interruptible(&(hcsr_devp->buffer_signal))){
 		printk(KERN_ALERT "%s: semaphore interrupted\n",__FUNCTION__);
-		system_abort();
+		platform_system_abort(hcsr_devp);
 		return -EFAULT;// semaphore interrupted
 	}
 
@@ -459,6 +459,38 @@ static struct file_operations hcsr_fops = {
 /*
 *Platform function implementations
 **/
+#define CLASS_NAME "HCSR"
+
+static ssize_t hcsr_show(struct device *dev, struct device_attribute *attr, char *buf){
+	
+	struct hcsr_dev* hcsr_devp;
+	printk("before get drvdata\n");
+	hcsr_devp = dev_get_drvdata(dev);
+	if(!strcmp(attr->attr.name, "trigger")){
+		//strncpy(attr_name, attr.attr.name, sizeof(attr.attr.name));
+		printk("after get drvdata\n");
+        return scnprintf(buf, PAGE_SIZE, "%d\n", hcsr_devp->dev_gpio_pair.trigger);
+	}
+	
+	return -EINVAL;
+}
+
+static ssize_t hcsr_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count){
+    return -EINVAL;
+}
+
+static DEVICE_ATTR(trigger,		S_IRUGO | S_IWUGO, hcsr_show, hcsr_store);
+static DEVICE_ATTR(echo,		S_IRUGO | S_IWUGO, hcsr_show, hcsr_store); 
+static DEVICE_ATTR(mode,		S_IRUGO | S_IWUGO, hcsr_show, hcsr_store); 
+static DEVICE_ATTR(frequency,	S_IRUGO | S_IWUGO, hcsr_show, hcsr_store); 
+static DEVICE_ATTR(enable,  	S_IRUGO | S_IWUGO, hcsr_show, hcsr_store); 
+static DEVICE_ATTR(distance,  	S_IRUGO | S_IWUGO, hcsr_show, hcsr_store); 
+
+static struct device *h_device[9];
+static struct class *hcsr_class;
+static dev_t hcsr_dev[9];
+static int no_of_devices =0;
+
 static int platform_hcsr_probe(struct platform_device* pdev){
 	static int i; 			// static i is always initialized to 0 hence no initialization
 	char* misc_dev_name;
@@ -487,7 +519,7 @@ static int platform_hcsr_probe(struct platform_device* pdev){
 
 	hcsr_devp->dev_mode_pair.frequency = 16;
 
-	hcsr_devp->dev_mode_pair.upcount = 0;
+	hcsr_devp->upcount = 0;
 
 	hcsr_devp->trigger_task_struct = NULL;
 
@@ -502,6 +534,53 @@ static int platform_hcsr_probe(struct platform_device* pdev){
 		kfree(hcsr_devp->misc_dev.name);
 		return -ECANCELED;
 	}
+
+	no_of_devices = i;
+
+	/* class */
+	if(i == 0){
+		hcsr_class = class_create(THIS_MODULE, CLASS_NAME);
+	    if (IS_ERR(hcsr_class)) {
+	            printk(KERN_ERR " cant create class %s\n", CLASS_NAME);
+	           // goto class_err;
+	            class_unregister(hcsr_class);
+	    		class_destroy(hcsr_class);
+	    }
+	}
+
+    /* device */
+    h_device[i] = device_create(hcsr_class, NULL, hcsr_dev[i], hcsr_devp, misc_dev_name);
+    if (IS_ERR(h_device)) {
+            printk(KERN_ERR " cant create device %s\n", misc_dev_name);
+            device_destroy(hcsr_class, hcsr_dev[i]);
+            //goto device_err;
+    }
+
+    /* device attribute on sysfs */
+    ret = device_create_file(h_device[i], &dev_attr_echo);
+    if (ret < 0) {
+            printk(KERN_ERR  " cant create device attribute %s %s\n", misc_dev_name, dev_attr_echo.attr.name);
+    }
+    ret = device_create_file(h_device[i], &dev_attr_trigger);
+    if (ret < 0) {
+            printk(KERN_ERR  " cant create device attribute %s %s\n", misc_dev_name, dev_attr_trigger.attr.name);
+    }
+    ret = device_create_file(h_device[i], &dev_attr_mode);
+    if (ret < 0) {
+            printk(KERN_ERR  " cant create device attribute %s %s\n", misc_dev_name, dev_attr_mode.attr.name);
+    }
+    ret = device_create_file(h_device[i], &dev_attr_frequency);
+    if (ret < 0) {
+            printk(KERN_ERR  " cant create device attribute %s %s\n", misc_dev_name, dev_attr_frequency.attr.name);
+    }
+    ret = device_create_file(h_device[i], &dev_attr_enable);
+    if (ret < 0) {
+            printk(KERN_ERR  " cant create device attribute %s %s\n", misc_dev_name, dev_attr_enable.attr.name);
+    }
+    ret = device_create_file(h_device[i], &dev_attr_distance);
+    if (ret < 0) {
+            printk(KERN_ERR  " cant create device attribute %s %s\n", misc_dev_name, dev_attr_distance.attr.name);
+    }
 	i++;
 	return 0;
 }
