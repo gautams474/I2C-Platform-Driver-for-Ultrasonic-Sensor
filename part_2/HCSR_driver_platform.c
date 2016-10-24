@@ -1,6 +1,7 @@
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/miscdevice.h>
+#include <linux/platform_device.h>
 #include <linux/module.h>
 #include <asm/uaccess.h>
 #include <linux/cdev.h>
@@ -20,7 +21,7 @@
 #include <asm/msr.h>
 #include "common_data.h"
 
-#define DEBUG 1
+#define DEBUG 0
 
 #define DEVICE_1	"HCSR_1"
 #define DEVICE_2	"HCSR_2"
@@ -51,8 +52,9 @@
 
 #define FREQ_TO_TIME(x) 1000/x
 
-static struct hcsr_dev{
+struct hcsr_dev{
 	struct miscdevice misc_dev;
+	struct platform_device platform_dev;
 
 	struct gpio_pair dev_gpio_pair;
 	struct mode_pair dev_mode_pair;
@@ -67,7 +69,8 @@ static struct hcsr_dev{
 	struct semaphore buffer_signal;		// GPIO irq handler signals non empty buffer and read func waits on it if buffer empty
 	
 	struct task_struct* trigger_task_struct; // kernel thread used to trigger in coninuous mode and check state
-}*hcsr_devp[2];
+} *hcsr_any_devp;
+
 
 void gpio_init(int pin, char* name, int direction, int value){
 	int ret;
@@ -89,6 +92,10 @@ void gpio_init(int pin, char* name, int direction, int value){
 		gpio_set_value_cansleep(pin, value); 
 	}
 }
+
+/*
+*Free resources
+*/
 
 void free_GPIOs(struct hcsr_dev* hcsr_devp){
 
@@ -114,17 +121,13 @@ void free_GPIOs(struct hcsr_dev* hcsr_devp){
 	}
 }
 
-
-void system_abort(void){
-	int i=0;
-	struct hcsr_dev* devp;
-	for(i=0; i<2; i++){
-		devp = hcsr_devp[i];
-		up(&(devp->buffer_signal));	// if read is waiting then signal it.
+inline void platform_system_abort(struct hcsr_dev* devp){
+		up(&(devp->buffer_signal));						// signal pending reads
 		free_GPIOs(devp);
-
-	}
+		kfree(devp->misc_dev.name);
 }
+
+/**********************************************************************/
 
 //inline int max(int num1, int num2){ if(num1>num2) return num1; else return num2; }
 
@@ -145,14 +148,13 @@ static irq_handler_t echo_handler(int irq, void *dev_id, struct pt_regs *regs){
 		time_diff = time_fall - time_rise;
 		
 		hcsr_devp->buffer[hcsr_devp->head] = time_diff/(58ul*400ul);
-		hcsr_devp->head = ((hcsr_devp->head) + 1) % 5;
-		hcsr_devp->size = max(hcsr_devp->size + 1, 5);												//(hcsr_devp->size +1) < 6 ? hcsr_devp->size + 1 : 5;
+		hcsr_devp->head = ((hcsr_devp->head)+1) % 5;
+		hcsr_devp->size = max(hcsr_devp->size+1, 5);												//(hcsr_devp->size +1) < 6 ? hcsr_devp->size + 1 : 5;
 		if((hcsr_devp->head == (hcsr_devp->tail + 1)%5) && (hcsr_devp->size == 5))		// to ensure FIFO behavior
 			hcsr_devp->tail = (hcsr_devp->head+1) % 5;
 
 		irq_set_irq_type(irq,IRQF_TRIGGER_RISING);
 		up(&(hcsr_devp->buffer_signal));
-		hcsr_devp->upcount = hcsr_devp->upcount + 1;
 	}
 
 	toggle_entry ^= 1;
@@ -163,23 +165,26 @@ static irq_handler_t echo_handler(int irq, void *dev_id, struct pt_regs *regs){
 static int hcsr_driver_open(struct inode *inode, struct file *file){
 	int device_no = 0;
 	struct miscdevice *c;
+	struct hcsr_dev* hcsr_devp;
 
 	device_no = MINOR(inode->i_rdev);
 	printk(KERN_ALERT"\nIn open, minor no = %d\n",device_no);
-	
-	list_for_each_entry(c, &hcsr_devp[0]->misc_dev.list, list) {
+
+	hcsr_devp = hcsr_any_devp;
+
+	//find minor number using the list
+	list_for_each_entry(c, &hcsr_devp->misc_dev.list, list) { 
 		if(c->minor == device_no){
 			printk(KERN_ALERT"Device: %s Opened\n", c->name);
 
 			if(!strncmp(c->name, DEVICE_1, 6)){
 				printk(KERN_ALERT"HSCR 1 Opened\n");
-				file->private_data = hcsr_devp[0];
-
+				file->private_data = container_of(c, struct hcsr_dev, misc_dev);  //hcsr_devp[0];
 				break;
 			}
 			else if(!strncmp(c->name, DEVICE_2, 6)){
 				printk(KERN_ALERT"HSCR 2 Opened\n");
-				file->private_data = hcsr_devp[1];
+				file->private_data = container_of(c, struct hcsr_dev, misc_dev);  //hcsr_devp[0];
 				break;
 			}
 			else{
@@ -204,7 +209,7 @@ inline void trigger_HCSR(struct hcsr_dev* hcsr_devp){
 
 int trigger_func(void* data){
 	struct hcsr_dev* hcsr_devp = (struct hcsr_dev *)data;
-	// int mode = hcsr_devp->dev_mode_pair.mode;
+	int mode = hcsr_devp->dev_mode_pair.mode;
 	int freq = hcsr_devp->dev_mode_pair.frequency, time;
 
 	if(IS_MODE_CONTINUOUS(hcsr_devp)/*mode == MODE_CONTINUOUS*/){
@@ -270,12 +275,12 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 			#endif
 
 			for(i=0; i < hcsr_devp->upcount; i++){
-			if(down_interruptible(&(hcsr_devp->buffer_signal))){
-				printk(KERN_ALERT "%s: semaphore interrupted\n",__FUNCTION__);
-				system_abort();
-				return -EFAULT;// semaphore interrupted
+				if(down_interruptible(&(hcsr_devp->buffer_signal))){
+					printk(KERN_ALERT "%s: semaphore interrupted\n",__FUNCTION__);
+					system_abort();
+					return -EFAULT;// semaphore interrupted
+				}
 			}
-		}
 
 			hcsr_devp->upcount = 0;
 			printk("\n");
@@ -389,11 +394,9 @@ static long HCSR_ioctl(struct file *file, unsigned int cmd, unsigned long arg){
 			
 			if(copy_from_user(&(hcsr_devp->dev_mode_pair), (struct mode_pair*)arg, sizeof(struct mode_pair)) != 0)
 				return -EFAULT;
-
 			#if DEBUG
 			printk("mode : %d , frequency : %d \n",hcsr_devp->dev_mode_pair.mode, hcsr_devp->dev_mode_pair.frequency);
 			#endif
-
 			if(hcsr_devp->dev_mode_pair.mode != MODE_CONTINUOUS && hcsr_devp->dev_mode_pair.mode != MODE_ONE_SHOT){
 				printk("%s: wrong mode %d\n",__FUNCTION__, hcsr_devp->dev_mode_pair.mode);
 				
@@ -443,6 +446,7 @@ static long HCSR_ioctl(struct file *file, unsigned int cmd, unsigned long arg){
 	return -ENOMSG;
 }
 
+
 /* File operations structure. Defined in linux/fs.h */
 static struct file_operations hcsr_fops = {
     .owner		= THIS_MODULE,           /* Owner */
@@ -453,97 +457,83 @@ static struct file_operations hcsr_fops = {
     .unlocked_ioctl = HCSR_ioctl,
 };
 
-/* Misc structure */
-static struct miscdevice hcsr_dev1 = {
- .minor = MISC_DYNAMIC_MINOR, 
- .name = DEVICE_1,      
- .fops = &hcsr_fops  
-};
-
-static struct miscdevice hcsr_dev2 = {
- .minor = MISC_DYNAMIC_MINOR, 
- .name = DEVICE_2,      
- .fops = &hcsr_fops  
-};
-
-static int __init hcsr_driver_init(void){
+/*
+*Platform function implementations
+**/
+static int platform_hcsr_probe(struct platform_device* pdev){
+	static int i; 			// static i is always initialized to 0 hence no initialization
+	char* misc_dev_name;
 	int ret;
+	struct hcsr_dev* hcsr_devp;
 
-	hcsr_devp[0] = kzalloc(sizeof(struct hcsr_dev), GFP_KERNEL);
-	if(!hcsr_devp[0]){
-		printk("%s: Kmalloc 1 failed\n",__FUNCTION__);
-		return -1;
+	hcsr_devp = platform_get_drvdata(pdev);  // container_of(pdev, struct hcsr_dev, platform_dev);
+	i = pdev->id;
+	if(i>9)
+		return -ENOMEM;
+
+	/*TO DO: Free this appropriately*/
+	misc_dev_name = kmalloc(sizeof(char) * (strlen("HCSR_") + 2) , GFP_KERNEL);   // supports from HCSR_0 to HCSR_9
+	
+	hcsr_devp->misc_dev.minor = MISC_DYNAMIC_MINOR;
+	sprintf(misc_dev_name, "HCSR_%d", i);
+	hcsr_devp->misc_dev.name = misc_dev_name;
+	hcsr_devp->misc_dev.fops = &hcsr_fops;
+	
+	hcsr_devp->head = 0;
+	hcsr_devp->tail = 0;
+	hcsr_devp->size = 0;
+
+	hcsr_devp->dev_gpio_pair.echo = -1;
+	hcsr_devp->dev_gpio_pair.trigger = -1;
+
+	hcsr_devp->dev_mode_pair.frequency = 16;
+
+	hcsr_devp->dev_mode_pair.upcount = 0;
+
+	hcsr_devp->trigger_task_struct = NULL;
+
+	sema_init(&(hcsr_devp->buffer_signal),0);
+
+	if(i == 0)
+		hcsr_any_devp = hcsr_devp;
+
+	ret = misc_register(&(hcsr_devp->misc_dev));
+	if(ret < 0){
+		printk("%d %s: misc dev register failed\n",__LINE__, __FUNCTION__);
+		kfree(hcsr_devp->misc_dev.name);
+		return -ECANCELED;
 	}
+	i++;
+	return 0;
+}
 
-	hcsr_devp[1] = kzalloc(sizeof(struct hcsr_dev), GFP_KERNEL);
-	if(!hcsr_devp[1]){
-		printk("%s: Kmalloc 2 failed\n",__FUNCTION__);
-		return -1;
-	}
+static int platform_hcsr_remove(struct platform_device *pdev){
+	struct hcsr_dev* hcsr_devp = platform_get_drvdata(pdev);  // container_of(pdev, struct hcsr_dev, platform_dev);
+	platform_system_abort(hcsr_devp);
+	misc_deregister(&(hcsr_devp->misc_dev));
+	return 0;
+}
 
-	hcsr_devp[0]->head = 0;
-	hcsr_devp[0]->tail = 0;
-	hcsr_devp[0]->size = 0;
+static struct platform_driver platform_HCSR04 = {
+	.probe = platform_hcsr_probe,
+	.remove = platform_hcsr_remove,
+	.driver = {
+		.name = "platform_HCSR04",
+		.owner = THIS_MODULE,
+	},
+};
 
-	hcsr_devp[1]->head = 0;
-	hcsr_devp[1]->tail = 0;
-	hcsr_devp[1]->size = 0;
-
-	hcsr_devp[0]->dev_gpio_pair.echo = -1;
-	hcsr_devp[0]->dev_gpio_pair.trigger = -1;
-
-	hcsr_devp[1]->dev_gpio_pair.echo = -1;
-	hcsr_devp[1]->dev_gpio_pair.trigger = -1;
-
-	hcsr_devp[0]->dev_mode_pair.frequency = 16;
-	hcsr_devp[1]->dev_mode_pair.frequency = 16;
-
-	hcsr_devp[0]->trigger_task_struct = NULL;
-	hcsr_devp[1]->trigger_task_struct = NULL;
-
-	hcsr_devp[0]->upcount = 0;
-	hcsr_devp[1]->upcount = 0;
-
-	sema_init(&(hcsr_devp[0]->buffer_signal),0);
-	sema_init(&(hcsr_devp[1]->buffer_signal),0);
-
-	ret = misc_register(&hcsr_dev1);
-	if (ret){
-		printk(KERN_ERR"Unable to register misc device 1\n");
-		kfree(hcsr_devp[0]);
-		kfree(hcsr_devp[1]);
-		return ret;
-	}
-
-	ret = misc_register(&hcsr_dev2);
-	if (ret){
-		printk(KERN_ERR"Unable to register misc device 2\n");
-		kfree(hcsr_devp[0]);
-		kfree(hcsr_devp[1]);
-		return ret;
-	}
-
-	/*TO DO @Gautam dont do this, it is inefficient and does a mem copy. --@PSK*/
-	hcsr_devp[0]->misc_dev = hcsr_dev1;
-	/*^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^*/
-	hcsr_devp[1]->misc_dev = hcsr_dev2;
-
-	return 0; 
+static int __init platform_hcsr_driver_init(void){
+	platform_driver_register(&platform_HCSR04);
+	return 0;
 }
 
 /* Driver Exit */
-void __exit hcsr_driver_exit(void){
-
-	system_abort();
-
-	misc_deregister(&hcsr_dev1);
-	misc_deregister(&hcsr_dev2);
-	kfree(hcsr_devp[0]);
-	kfree(hcsr_devp[1]);
-
-	printk("hcsr driver removed.\n");
+void __exit platform_hcsr_driver_exit(void){
+	platform_driver_unregister(&platform_HCSR04);
+	printk("hcsr platform driver removed.\n");
 }
-
-module_init(hcsr_driver_init);
-module_exit(hcsr_driver_exit);
+// module_platform_driver(platform_HCSR04);
+module_init(platform_hcsr_driver_init);
+module_exit(platform_hcsr_driver_exit);
 MODULE_LICENSE("GPL v2");

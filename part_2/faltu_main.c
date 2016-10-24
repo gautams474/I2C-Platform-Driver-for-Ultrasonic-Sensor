@@ -37,7 +37,7 @@ int main(){
 	}
 
 	dev1_mode.mode = MODE_CONTINUOUS;
-	dev1_mode.frequency = 1;
+	dev1_mode.frequency = 16;
 
 	res = ioctl(fd_1,SETMODE,&dev1_mode);
 	if(res < 0){
