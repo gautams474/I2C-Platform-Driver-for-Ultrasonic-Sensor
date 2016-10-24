@@ -323,7 +323,9 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 static ssize_t hcsr_driver_read(struct file *file, char *buf, size_t count, loff_t *ppos){
 	
 	struct hcsr_dev *hcsr_devp = file->private_data;
-	// int i;
+	#ifdef DEBUG
+		int i;
+	#endif
 	long val;
 	
 	if(/*BUFFER_EMPTY(hcsr_devp) && IS_STOPPED(hcsr_devp)  &&*/ IS_MODE_ONE_SHOT(hcsr_devp)){
