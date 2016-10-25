@@ -12,64 +12,32 @@ void gpio_inits(void);
 void gpio_unexport(void);
 
 int main(){
-	int fd_1 = 0, fd_2 = 0, ret = 0, res = 0;
+	int fd_1 = 0, fd_2 = 0, ret = 0;
 	int i = 10, input = 1;
 	long output;
 
 	gpio_inits();
 
-	fd_1 = open("/dev/HCSR_1", O_RDWR);
+	fd_1 = open("/dev/HCSR_0", O_RDWR);
 	if (fd_1< 0 ){
-		printf("Can not open device file.\n");		
-		return 0;
-	}
-	
-	fd_2 = open("/dev/HCSR_2", O_RDWR);
-	if (fd_2 < 0 ){
-		printf("Can not open device file.\n");		
+		printf("Can not open device file 1.\n");		
 		return 0;
 	}
 
 	printf("**********************************************************\n");
-	printf("Starting with HCSR_1\n");
+	printf("Starting with HCSR_0\n");
 	printf("**********************************************************\n");
-	struct gpio_pair dev1_gpio, dev2_gpio;
-	struct mode_pair dev1_mode, dev2_mode;
 
-	// set device 1 echo and trigger pins using ioctl
-	dev1_gpio.echo = DEV_1_GPIO_ECHO;
-	dev1_gpio.trigger = DEV_1_GPIO_TRIGGER;
-
-
-	res = ioctl(fd_1, SETPINS, (unsigned long)&dev1_gpio);
-	if(res < 0){
-		perror("IOCTL Error: ");
-		return 0;
-	}
-
-	printf("Setting HCSR_1 in Continuous Mode\n");
-	// set device 1 in Continuous mode
-	dev1_mode.mode = MODE_CONTINUOUS;
-	dev1_mode.frequency = 16;
-
-	// set device 2 in one shot mode
-	dev2_mode.mode = MODE_ONE_SHOT;
-	dev2_mode.frequency = -1;
-
-	res = ioctl(fd_1,SETMODE,&dev1_mode);
-	if(res < 0){
-		perror("IOCTL Error: ");
-		return 0;
-	}
+	fflush(stdout);
 
 	printf("CORNER CASE:\n");
-	printf("Reading from HCSR_1 when sampling is not started. It should fail and not block\n");
+	printf("Reading from HCSR_0 when sampling is not started. It should fail and not block\n");
 	ret = read(fd_1,&output,sizeof(output));
 	if(ret < 0){
 		perror("Error: ");
 	}
 
-	printf("HCSR_1 starting periodic sampling \n");
+	printf("HCSR_0 clearing buffer one shot \n");
 	// write input = 1 start periodic sampling for device 1
 	ret = write(fd_1, &input, sizeof(input));
 	if(ret < 0){
@@ -78,9 +46,9 @@ int main(){
 		fflush(stdout);
 	}
 	
-	printf("Reading from HCSR_1 100 times\n");
+	printf("Reading from HCSR_0 25 times\n");
 	// read device 1 value 100 times, may sleep if buffer is empty
-	i = 100;
+	i = 25;
 	while(i > 0){
 		ret = read(fd_1,&output,sizeof(output));
 		if(ret < 0){
@@ -94,54 +62,21 @@ int main(){
 		i--;
 	}
 
-	printf("Stopping HCSR_1\n");
-	// device 1 continuous mode stopped
-	input = 0; 
-	ret = write(fd_1,&input, sizeof(input));
-	if(ret < 0){
-		perror("Write Error: ");
-	}
-
-	printf("Reading last 6 values from HCSR_1");
-	printf("this may cause the last value to return with error\n");
-	for(i =0; i < 6; i++){
-	// device 1 should return fault on 6th reading as continuos mode stopped, buffer size = 5
-		output = -1;
-		ret = read(fd_1,&output,sizeof(output));
-		if(ret < 0){
-			perror("Error: ");
-			break;
-		}
-
-		//display
-		printf("Sensor 1 Distance = %ld \n",output);
-		fflush(stdout);
-	}
-
 	printf("User thread sleeping sleeping\n");
 	sleep(2);
 
 	printf("\n\n**********************************************************\n");
-	printf("Starting with HCSR_2\n");
+	printf("Starting with HCSR_1\n");
 	printf("**********************************************************\n");
-	// set device 2 echo and trigger pins using ioctl
-	dev2_gpio.echo = DEV_2_GPIO_ECHO;
-	dev2_gpio.trigger = DEV_2_GPIO_TRIGGER;
+	fflush(stdout);
 
-	res = ioctl(fd_2, SETPINS, (unsigned long)&dev2_gpio);
-	if(res < 0){
-		perror("IOCTL Error: ");
+	fd_2 = open("/dev/HCSR_1", O_RDWR);
+	if (fd_2 < 0 ){
+		perror("Can not open device file 2.\t");
 		return 0;
 	}
 
-	printf("Setting HCSR_2 in One Shot Mode\n");
-	res = ioctl(fd_2,SETMODE,&dev2_mode);
-	if(res < 0){
-		perror("IOCTL Error: ");
-		return 0;
-	}
-
-	printf("HCSR_2 triggering one short mode, buffer cleared\n");
+	printf("HCSR_1 triggering start sampling\n");
 	// device 2 in one shot mode buffer not cleared, trigger measurement
 	input = 1; 
 	ret = write(fd_2,&input, sizeof(input));
@@ -151,30 +86,27 @@ int main(){
 		fflush(stdout);
 	}
 
-	printf("Reading from HCSR_2 which was triggered earlier\n");
-	// read device 2 value, triggered earlier
-	ret = read(fd_2,&output,sizeof(output));
-	if(ret < 0){
-		perror("Error: ");
-		printf("\n");
+	for(i=0; i< 25; i++){
+	//device 2 read shows previous value triggered by write, read  also triggers another one shot measurement
+		ret = read(fd_2,&output,sizeof(output));
+		if(ret < 0){
+			perror("Error: ");
+		}
+
+		//display
+		printf("Sensor 2 Distance = %ld \n",output);
 		fflush(stdout);
 	}
 
-	//display device 2 value
-	printf("\nSensor 2 Distance = %ld\n",output);
-	fflush(stdout);
-
-	printf("Reading from sensor 2\n");
-	fflush(stdout);
-	//device 2 read shows previous value triggered by write, read  also triggers another one shot measurement
-	ret = read(fd_2,&output,sizeof(output));
+	printf("HCSR_1 triggering stop sampling\n");
+	// device 2 in one shot mode buffer not cleared, trigger measurement
+	input = 0; 
+	ret = write(fd_2,&input, sizeof(input));
 	if(ret < 0){
-		perror("Error: ");
+		perror("Write Error: ");
+		printf("\n");
+		fflush(stdout);
 	}
-
-	//display
-	printf("\nSensor 2 Distance = %ld \n",output);
-	fflush(stdout);
 
 	printf("closing\n");
 	fflush(stdout);
@@ -211,9 +143,9 @@ void gpio_unexport(void){
 	each_gpio_unexport(fd, "17");
 	each_gpio_unexport(fd, "76");
 
-	each_gpio_unexport(fd, "18");
-	each_gpio_unexport(fd, "19");
-	each_gpio_unexport(fd, "66");
+	each_gpio_unexport(fd, "28");
+	each_gpio_unexport(fd, "29");
+	each_gpio_unexport(fd, "45");
 
 	each_gpio_unexport(fd, "36");
 	each_gpio_unexport(fd, "37");
@@ -221,7 +153,7 @@ void gpio_unexport(void){
 	close(fd);
 }
 
-void each_gpio_init(const int fd_export,const char* baseAddress,const char* pin,const char* direction,const char* value){
+void each_gpio_init(const int fd_export,const char* baseAddress,const char* pin,const char* direction, const char* value){
 	
 	int fd_direction;
 	int fd_value;
@@ -282,9 +214,9 @@ void gpio_inits(void){
 	each_gpio_init(fd, baseAddress, "17", "out", "0");
 	each_gpio_init(fd, baseAddress, "76", NULL, NULL);
 
-	each_gpio_init(fd, baseAddress, "18", "out", "1");
-	each_gpio_init(fd, baseAddress, "19", "out", "0");
-	each_gpio_init(fd, baseAddress, "66", NULL, NULL);
+	each_gpio_init(fd, baseAddress, "28", "out", "1");
+	each_gpio_init(fd, baseAddress, "29", "out", "0");
+	each_gpio_init(fd, baseAddress, "45", "out", "0");
 
 	each_gpio_init(fd, baseAddress, "36", "out", "0");
 	each_gpio_init(fd, baseAddress, "37", "out", "0");

@@ -22,6 +22,7 @@ struct hcsr_dev{
 	int size;
 
 	unsigned int upcount;
+	int enable;
 	
 	struct semaphore buffer_signal;		// GPIO irq handler signals non empty buffer and read func waits on it if buffer empty
 	
