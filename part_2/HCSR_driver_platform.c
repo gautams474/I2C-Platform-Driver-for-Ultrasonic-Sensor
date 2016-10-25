@@ -274,7 +274,7 @@ int start_triggers(struct hcsr_dev *hcsr_devp){
 static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count, loff_t *ppos){
 	struct hcsr_dev *hcsr_devp = file->private_data;
 	int input, ret = 0, i;
-	unsigned long time;
+	//unsigned long time;
 
 	if(hcsr_devp->enable == 0){
 		printk("enable not set\n");
