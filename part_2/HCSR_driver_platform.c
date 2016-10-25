@@ -21,10 +21,10 @@
 #include <asm/msr.h>
 #include "common_data.h"
 
-#define DEBUG 1
+#define DEBUG 0
 
-#define DEVICE_1	"HCSR_1"
-#define DEVICE_2	"HCSR_2"
+#define DEVICE_1	"HCSR_0"
+#define DEVICE_2	"HCSR_1"
 
 #define GPIO_ECHO_LVL_SHFTR 34
 #define GPIO_ECHO_PULL_UP 35
@@ -155,7 +155,9 @@ static irq_handler_t echo_handler(int irq, void *dev_id, struct pt_regs *regs){
 			hcsr_devp->tail = (hcsr_devp->head+1) % 5;
 
 		irq_set_irq_type(irq,IRQF_TRIGGER_RISING);
+
 		up(&(hcsr_devp->buffer_signal));
+		hcsr_devp->upcount = hcsr_devp->upcount + 1;
 	}
 
 	toggle_entry ^= 1;
@@ -169,30 +171,45 @@ static int hcsr_driver_open(struct inode *inode, struct file *file){
 	struct hcsr_dev* hcsr_devp;
 
 	device_no = MINOR(inode->i_rdev);
-	printk(KERN_ALERT"\nIn open, minor no = %d\n",device_no);
+
+	#if DEBUG
+		printk(KERN_ALERT"\nIn open, minor no = %d\n",device_no);
+	#endif
+
+	
 
 	hcsr_devp = hcsr_any_devp;
+
+	if(hcsr_devp->misc_dev.minor == device_no){
+			printk(KERN_ALERT"%s Opened\n", hcsr_devp->misc_dev.name);
+			file->private_data = hcsr_devp;
+			return 0;
+	}
 
 	//find minor number using the list
 	list_for_each_entry(c, &hcsr_devp->misc_dev.list, list) { 
 		if(c->minor == device_no){
-			printk(KERN_ALERT"Device: %s Opened\n", c->name);
+			#if DEBUG
+				printk(KERN_ALERT"Device: %s Opened\n", c->name);
+			#endif
+			
 
 			if(!strncmp(c->name, DEVICE_1, 6)){
-				printk(KERN_ALERT"HSCR 1 Opened\n");
+				printk(KERN_ALERT"%s Opened\n", c->name);
 				file->private_data = container_of(c, struct hcsr_dev, misc_dev);  //hcsr_devp[0];
 				break;
 			}
 			else if(!strncmp(c->name, DEVICE_2, 6)){
-				printk(KERN_ALERT"HSCR 2 Opened\n");
+				printk(KERN_ALERT"%s Opened\n", c->name);
 				file->private_data = container_of(c, struct hcsr_dev, misc_dev);  //hcsr_devp[0];
 				break;
 			}
 			else{
-				printk(KERN_ERR"FILE OPEN: NAME NOT FOUND\n");
+				printk(KERN_ALERT"FILE OPEN: NAME NOT FOUND\n");
 				return -EFAULT;
 			}
 		}
+		
 	}
 	return 0;
 }
@@ -257,7 +274,12 @@ int start_triggers(struct hcsr_dev *hcsr_devp){
 static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count, loff_t *ppos){
 	struct hcsr_dev *hcsr_devp = file->private_data;
 	int input, ret = 0, i;
-	unsigned long time;
+	//unsigned long time;
+
+	if(hcsr_devp->enable == 0){
+		printk("enable not set\n");
+		return -EFAULT;
+	}
 	
 	if(buf == NULL){
 		printk("%s: buf NULL\n",__FUNCTION__);
@@ -272,7 +294,7 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 		if(input){ // clear buffer for non zero input
 
 			#if DEBUG
-				printk("before clearing semaphore\nsize: %d \t", hcsr_devp->size);
+				printk("before clearing semaphore\nsize: %d upcount: %d\t", hcsr_devp->size, hcsr_devp->upcount);
 			#endif
 
 			for(i=0; i < hcsr_devp->upcount; i++){
@@ -284,8 +306,6 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 			}
 
 			hcsr_devp->upcount = 0;
-			printk("\n");
-
 			#if DEBUG	
 			printk("\n");
 			#endif
@@ -317,10 +337,8 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 					printk("triggering stopped\n");
 			}			
 		}
-		else if(input == START_CONT_TRIGGER){  // start continuous triggering			
-			printk("before start trigger %lu\n",rdtscl(time));
+		else if(input == START_CONT_TRIGGER)  // start continuous triggering
 			ret = start_triggers(hcsr_devp);
-		}
 	}
 	
 	return ret;
@@ -334,6 +352,11 @@ static ssize_t hcsr_driver_read(struct file *file, char *buf, size_t count, loff
 	struct hcsr_dev *hcsr_devp = file->private_data;
 	
 	long val;
+
+	if(hcsr_devp->enable == 0){
+		printk("enable not set\n");
+		return -EFAULT;
+	}
 	
 	if(/*BUFFER_EMPTY(hcsr_devp) && IS_STOPPED(hcsr_devp)  &&*/ IS_MODE_ONE_SHOT(hcsr_devp)){
 			trigger_HCSR(hcsr_devp);
@@ -343,8 +366,6 @@ static ssize_t hcsr_driver_read(struct file *file, char *buf, size_t count, loff
 				printk(KERN_ALERT "%s: triggering in one shot mode\n",__FUNCTION__);
 			#endif
 	}
-	else
-		printk(KERN_ERR "%s: not triggering, trigger_task_struct is not null\n",__FUNCTION__);
 
 	// // Avoids sleeping indefinately when continuous mode is not on
 	if(BUFFER_EMPTY(hcsr_devp) && IS_STOPPED(hcsr_devp) && IS_MODE_CONTINUOUS(hcsr_devp))
@@ -468,13 +489,15 @@ static struct file_operations hcsr_fops = {
 static ssize_t hcsr_show(struct device *dev, struct device_attribute *attr, char *buf){
 	int latestReadead = -1;
 	struct hcsr_dev* hcsr_devp;
-	int head, i;
+	int head;
+	#if DEBUG
+		int i;
+		printk("before get drvdata\n");
+	#endif
 	
-	printk("before get drvdata\n");
+	
 	hcsr_devp = dev_get_drvdata(dev);
 	if(!strcmp(attr->attr.name, "trigger")){
-		//strncpy(attr_name, attr.attr.name, sizeof(attr.attr.name));
-		printk("after get drvdata\n");
         return scnprintf(buf, PAGE_SIZE, "%d\n", hcsr_devp->dev_gpio_pair.trigger);
 	}
 	else if (!strcmp(attr->attr.name, "echo")){
@@ -590,7 +613,7 @@ static ssize_t hcsr_store(struct device *dev, struct device_attribute *attr, con
 		return PAGE_SIZE;
 	}
 	else if (!strcmp(attr->attr.name, "enable")){
-		printk("inside enable store\n");
+		//printk("inside enable store\n");
 		if(!(input == 0 || input == 1)){
 			printk("%s: Wrong value of enable %d\n",__FUNCTION__, input);
 			return -EINVAL;
@@ -602,6 +625,8 @@ static ssize_t hcsr_store(struct device *dev, struct device_attribute *attr, con
 										hcsr_devp->dev_mode_pair.mode, hcsr_devp->dev_gpio_pair.echo, hcsr_devp->dev_gpio_pair.trigger);
 			return -EFAULT;
 		}
+		return PAGE_SIZE;
+		/*
 		if(input == 1){
 			if(IS_MODE_ONE_SHOT(hcsr_devp)){
 				trigger_HCSR(hcsr_devp);
@@ -629,7 +654,7 @@ static ssize_t hcsr_store(struct device *dev, struct device_attribute *attr, con
 			else if(IS_MODE_ONE_SHOT(hcsr_devp)){
 				return 1;
 			}
-		}
+		}*/
 	}
 	else if (!strcmp(attr->attr.name, "distance")){
 		printk("distance setting not allowed");
@@ -663,7 +688,6 @@ static int platform_hcsr_probe(struct platform_device* pdev){
 	if(i>9)
 		return -ENOMEM;
 
-	/*TO DO: Free this appropriately*/
 	misc_dev_name = kmalloc(sizeof(char) * (strlen("HCSR_") + 2) , GFP_KERNEL);   // supports from HCSR_0 to HCSR_9
 	
 	hcsr_devp->misc_dev.minor = MISC_DYNAMIC_MINOR;
@@ -697,6 +721,7 @@ static int platform_hcsr_probe(struct platform_device* pdev){
 		return -ECANCELED;
 	}
 
+	printk("%s: minor number %d\n",__FUNCTION__, hcsr_devp->misc_dev.minor);
 	no_of_devices = i;
 
 	/* class */
@@ -749,6 +774,9 @@ static int platform_hcsr_probe(struct platform_device* pdev){
 
 static int platform_hcsr_remove(struct platform_device *pdev){
 	struct hcsr_dev* hcsr_devp = platform_get_drvdata(pdev);  // container_of(pdev, struct hcsr_dev, platform_dev);
+	#if DEBUG
+	printk("In remove\n");
+	#endif
 	platform_system_abort(hcsr_devp);
 	misc_deregister(&(hcsr_devp->misc_dev));
 	return 0;
@@ -771,8 +799,12 @@ static int __init platform_hcsr_driver_init(void){
 /* Driver Exit */
 void __exit platform_hcsr_driver_exit(void){
 	int i;
-	for(i=0;i<no_of_devices;i++)
+	for(i=0;i<=no_of_devices;i++){
+		#if DEBUG
+		printk("no. of devices : %d\n", no_of_devices);
+		#endif
 		device_destroy(hcsr_class, hcsr_dev[i]);
+	}
 
 	class_unregister(hcsr_class);
 	class_destroy(hcsr_class);

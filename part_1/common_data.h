@@ -13,7 +13,7 @@
 #define DEV_1_GPIO_TRIGGER 14		//GPIO 14 == IO3
 //#define GPIO_TRIGGER 14
 
-#define DEV_2_GPIO_ECHO 0			//GPIO 0 == IO5
+#define DEV_2_GPIO_ECHO 12			//GPIO 12 == IO1
 #define DEV_2_GPIO_TRIGGER 6		//GPIO 6 == IO4
 
 struct gpio_pair{

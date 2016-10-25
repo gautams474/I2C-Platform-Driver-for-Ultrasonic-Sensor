@@ -1,0 +1,38 @@
+#!/bin/sh
+insmod HCSR_driver_platform.ko
+insmod HCSR_device_platform.ko
+
+#dev 0
+echo -n "12" > /sys/class/HCSR/HCSR_0/echo
+echo -n "6" > /sys/class/HCSR/HCSR_0/trigger
+echo -n "1" > /sys/class/HCSR/HCSR_0/enable
+
+#dev 0 one shot
+echo -n "0" > /sys/class/HCSR/HCSR_0/mode 
+
+
+echo echo: 
+cat /sys/class/HCSR/HCSR_0/echo
+echo trigger: 
+cat /sys/class/HCSR/HCSR_0/trigger
+echo mode: 
+cat /sys/class/HCSR/HCSR_0/mode 
+
+
+#dev 1
+echo -n "13" > /sys/class/HCSR/HCSR_1/echo
+echo -n "14" > /sys/class/HCSR/HCSR_1/trigger
+echo -n "1" > '/sys/class/HCSR/HCSR_1/enable'
+
+#dev 1 continuous
+echo -n "1" > /sys/class/HCSR/HCSR_1/mode
+echo -n "16" > /sys/class/HCSR/HCSR_1/frequency 
+
+echo echo: 
+cat /sys/class/HCSR/HCSR_1/echo
+echo trigger: 
+cat /sys/class/HCSR/HCSR_1/trigger
+echo mode: 
+cat /sys/class/HCSR/HCSR_1/mode 
+echo frequency: 
+cat /sys/class/HCSR/HCSR_1/frequency

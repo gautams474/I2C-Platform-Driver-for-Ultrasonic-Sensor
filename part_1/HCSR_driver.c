@@ -20,7 +20,7 @@
 #include <asm/msr.h>
 #include "common_data.h"
 
-#define DEBUG 1
+#define DEBUG 0
 
 #define DEVICE_1	"HCSR_1"
 #define DEVICE_2	"HCSR_2"
@@ -209,7 +209,7 @@ int trigger_func(void* data){
 
 	if(IS_MODE_CONTINUOUS(hcsr_devp)/*mode == MODE_CONTINUOUS*/){
 		time = FREQ_TO_TIME(freq);
-		printk("\t\tsleep time: %d\n", time);
+		//printk("\t\tsleep time: %d\n", time);
 		while(!kthread_should_stop()){
 			trigger_HCSR(hcsr_devp);
 			msleep(time);
@@ -251,7 +251,6 @@ int start_triggers(struct hcsr_dev *hcsr_devp){
 static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count, loff_t *ppos){
 	struct hcsr_dev *hcsr_devp = file->private_data;
 	int input, ret = 0, i;
-	unsigned long time;
 	
 	if(buf == NULL){
 		printk("%s: buf NULL\n",__FUNCTION__);
@@ -278,8 +277,7 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 		}
 
 			hcsr_devp->upcount = 0;
-			printk("\n");
-
+			
 			#if DEBUG	
 			printk("\n");
 			#endif
@@ -312,7 +310,7 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 			}			
 		}
 		else if(input == START_CONT_TRIGGER){  // start continuous triggering			
-			printk("before start trigger %lu\n",rdtscl(time));
+			//printk("before start trigger %lu\n",rdtscl(time));
 			ret = start_triggers(hcsr_devp);
 		}
 	}
@@ -323,8 +321,9 @@ static ssize_t hcsr_driver_write(struct file *file, const char *buf,size_t count
 static ssize_t hcsr_driver_read(struct file *file, char *buf, size_t count, loff_t *ppos){
 	
 	struct hcsr_dev *hcsr_devp = file->private_data;
+
 	#if DEBUG
-		int i;
+	int i;
 	#endif
 	long val;
 	
@@ -336,9 +335,8 @@ static ssize_t hcsr_driver_read(struct file *file, char *buf, size_t count, loff
 				printk(KERN_ALERT "%s: triggering in one shot mode\n",__FUNCTION__);
 			#endif
 	}
-	else
-		printk(KERN_ERR "%s: not triggering, trigger_task_struct is not null\n",__FUNCTION__);
-
+	
+	
 	// // Avoids sleeping indefinately when continuous mode is not on
 	if(BUFFER_EMPTY(hcsr_devp) && IS_STOPPED(hcsr_devp) && IS_MODE_CONTINUOUS(hcsr_devp))
 			return -ERESTARTSYS;
@@ -434,9 +432,10 @@ static long HCSR_ioctl(struct file *file, unsigned int cmd, unsigned long arg){
 				printk("Error requesting IRQ: %d\n", ret);
 				return -EFAULT;
 			}
-			
+			#if DEBUG
 			printk(KERN_ALERT"%s: echo: %d  echo_irq: %d trigger: %d   for device %s\n",
 								__FUNCTION__, hcsr_devp->dev_gpio_pair.echo, echo_irq, hcsr_devp->dev_gpio_pair.trigger, hcsr_devp->misc_dev.name);
+			#endif
 			return 0;
 		default:
 			return -EFAULT;
